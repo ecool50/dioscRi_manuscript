@@ -1,0 +1,460 @@
+---
+title: "Bioheart Prediction"
+author: "Elijah WIllie"
+date: "2024-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpregOverlap)
+  library(scales)
+  library(ggnewscale)
+})
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/customCV.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/deep_learning_helper_funcs.R')
+set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+# Update the markers
+```{r}
+useMarkers <- gsub("_", "-", useMarkers)
+allMarkers <- gsub("_", "-", allMarkers)
+```
+
+
+# Load normalised data
+```{r}
+load('../sce_dat/study_4_MMD_VAE_sce.RData')
+load('../sce_dat/study_3_MMD_VAE_sce.RData')
+```
+
+## Use FuseSOM to cluster the normalised data
+```{r, eval=T}
+# run FuseSOM clustering
+nclust = 11
+sce_norm <- runFuseSOM(sce_norm, numClusters = nclust, assay = 'raw',
+                       verbose = FALSE, clusterCol = 'clusters_raw')
+# sce_norm$clusters <- sce_temp$clusters
+```
+
+# Look at the clustering performance per sample
+```{r}
+df_norm <- assay(sce_norm, type = "raw") %>%
+  t() %>%
+  as.data.frame() %>%
+  # mutate(cellTypes = sce_norm$mg_cell_type_distinct) %>%
+  mutate(predicted_norm = sce_norm$clusters_norm)
+  # mutate(predicted_raw = sce_norm$clusters_raw) %>%
+  # mutate(sample_id = sce_norm$sample_id)
+```
+
+# Train clustering model with Caret
+## Select training and testing data
+```{r}
+train_x <- assay(sce_norm, type = "raw") %>%
+  t() %>%
+  as.data.frame() %>%
+  mutate(cellTypes = as.factor(sce_norm$clusters_raw))
+  # mutate(sample_id = sce_norm$sample_id) %>%
+  # dplyr::filter(sample_id %in% c('586', '804')) %>%
+  # dplyr::select(-sample_id)
+
+test_x <- assay(sce_3_norm, type = "raw") %>%
+  t() %>%
+  as.data.frame()
+```
+
+```{r, eval=T}
+df_3_clusters <- cellTypeClassifier(train_x, test_x, model = 'lda')
+
+table(df_3_clusters)
+
+sce_3_norm$clusters_raw <- as.factor(df_3_clusters)
+```
+
+
+# Compute training features
+## Proportions
+```{r}
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Gender, Age) %>%
+  distinct()
+clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+
+# row_names <- rownames(data)
+
+# Age <- clinicaldata[match(row_names,clinicaldata$sample_id),
+#                                       "Age"]
+# GenderM <- clinicaldata[match(row_names,clinicaldata$sample_id),
+#                                       c("GenderM")]
+
+# clinicaldata_info <- cbind(Age, GenderM)
+```
+
+## Generate features
+### Proportions
+```{r}
+clinicaldata_3 <- colData(sce_3_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
+  distinct()
+# clinicaldata_3$Gensini_bin <- factor(if_else(clinicaldata_3$Gensini > 0, 1, 0))
+encoded_gender_3 <- model.matrix(~Gender-1, data=clinicaldata_3)
+clinicaldata_3 <- cbind(clinicaldata_3, encoded_gender_3)
+clinicaldata_3$Gensini_bin <- as.factor(clinicaldata_3$Gensini_bin)
+# row_names_3 <- rownames(data_3)
+
+# Age_3 <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+#                                       "Age"]
+# GenderM_3 <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+#                                       c("GenderM")]
+# 
+# clinicaldata_info_3 <- cbind(Age, GenderM)
+```
+
+
+# Compute training features
+## Proportions
+```{r}
+data_logit <- computeFeatures(sce = sce_norm, featureType = 'prop', 
+                              cellTypeCol = 'clusters_raw', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+row_names <- rownames(data_logit)
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Gensini_bin"])
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType <- computeFeatures(sce = sce_norm, featureType = 'mean', assay = 'raw',
+                              cellTypeCol = 'clusters_raw', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+
+## Compute features on study 3
+## Proportions
+```{r}
+data_3_logit <- computeFeatures(sce = sce_3_norm, featureType = 'prop', 
+                              cellTypeCol = 'clusters_raw', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+row_names_3 <- rownames(data_3_logit)
+condition_3 <- factor(clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      "Gensini_bin"])
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType_3 <- computeFeatures(sce = sce_3_norm, featureType = 'mean', assay = 'raw',
+                              cellTypeCol = 'clusters_raw', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+
+# Generate grouping structures
+```{r}
+nclust <- 11
+trees <- generateTree(features = data_logit, method = "ward")
+tree <- trees$tree
+order <- trees$order
+groups <- generateGroups(tree = tree, nclust = nclust, 
+                         proportions = data_logit, means = markerMeanCellType)
+```
+
+# Process training and testing data
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- cbind(data_logit, markerMeanCellType) 
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('center', 'scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+  
+# Extract response variable
+y_train <- condition %>%
+    as.numeric()
+```
+
+## Testing
+```{r}
+X_test_study_3 <- cbind(data_3_logit, markerMeanCellType_3) %>%
+  as.matrix()
+X_test_study_3 <- predict(scaleVals, X_test_study_3)
+```
+
+
+## Fit Overlap model
+```{r}
+groups <- lapply(groups, sort)
+fit <- fitModel(x_train = X_train, y_train = y_train, groups = groups)
+```
+
+## Predict on the training data
+```{r}
+train_auc <- plotAUC(fit = fit$fit, x_test = X_train, y_test = condition, title = "Study 4 - All AUC =")
+train_auc$plot
+```
+
+
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, x_test = X_test_study_3, y_test = condition_3, title = "Study 3 - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../auc_data/fs_glasso_auc_all_study_3_baseline.csv')
+
+```
+
+# Visualise Resulting Tree
+```{r, fig.height=16, fig.width=16}
+p <- visualiseModelTree(fit = fit$fit, tree = tree, 
+                   training_data = X_train, title = "Baseline Clustering Feature Tree")
+
+ggsave(file="../Plots/baseline_fs_tree.svg", plot=p, width=18, height=16, dpi = 1200)
+```
+
+# Look at significant features
+## Study 4
+```{r, eval=T, fig.height=10, fig.width=16}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_mean <- getSigFeatures(fit$fit, type = 'mean',  
+                         mean = markerMeanCellType, clinicaldata = clinicaldata, 
+                         outcome = "Gensini_bin")
+
+if(sum(stats_mean$stats$p.adj < 0.05) > 0){
+  plotSigFeatures(stats = stats_mean$stats, sigFeatures = stats_mean$sig_features, outcome = "Gensini bin")
+}
+```
+
+```{r, fig.height=10, fig.width=16}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_prop <- getSigFeatures(fit$fit, type = 'prop', prop = data, 
+                              clinicaldata = clinicaldata, 
+                         outcome = "Gensini_bin")
+if(sum(stats_prop$stats$p.adj < 0.05) > 0){
+  plotSigFeatures(stats = stats_prop$stats, sigFeatures = stats_prop$sig_features, outcome = "Gensini bin")
+}
+```
+## Study 3
+```{r, eval=T, fig.height=10, fig.width=16, eval=TRUE}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_mean_3 <- getSigFeatures(fit, type = 'mean',  
+                         mean = markerMeanCellType_3, clinicaldata = clinicaldata_3, 
+                         outcome = "Gensini_bin")
+
+if(sum(stats_mean_3$stats$p.adj < 0.05) > 0){
+  plotSigFeatures(stats = stats_mean_3$stats, sigFeatures = stats_mean_3$sig_features, outcome = "Gensini bin")
+}
+```
+
+```{r, eval=T, fig.height=10, fig.width=16, eval=FALSE}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_prop_3 <- getSigFeatures(fit, type = 'prop',  
+                         prop = data_3_logit, clinicaldata = clinicaldata_3, 
+                         outcome = "Gensini_bin")
+
+if(sum(stats_prop_3$stats$p.adj < 0.05) > 0){
+  plotSigFeatures(stats = stats_prop_3$stats, sigFeatures = stats_prop_3$sig_features, outcome = "Gensini bin")
+}
+```
+
+
+
+# Look at just the proportions
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- data_logit %>%
+  as.matrix()
+  
+# Scale the combined data
+# scaleVals <- preProcess(X_train, method = c('scale'))
+# X_train <- predict(scaleVals, X_train) %>%
+#     as.matrix()
+```
+
+## Testing
+```{r}
+X_test_study_3 <- data_3_logit %>%
+  as.matrix()
+# X_test_study_3 <- predict(scaleVals, X_test_study_3)
+```
+
+```{r}
+groups <- generateGroups(tree = tree, nclust = 11, proportions = data_logit,
+                         means = markerMeanCellType, type = "prop")
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(x_train = X_train, y_train = y_train, groups = groups)
+```
+
+## Predict on the training data
+```{r}
+train_auc <- plotAUC(fit = fit$fit, x_test = X_train, y_test = condition, title = "Study 4 - Proportions AUC =")
+train_auc$plot
+```
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, x_test = X_test_study_3, y_test = condition_3, title = "Study 3 - Proportions AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../auc_data/fs_glasso_auc_prop_study_3_baseline.csv')
+
+```
+## Look at tree plot
+```{r, fig.height=10, fig.width=16}
+visualiseModelTree(fit = fit$fit, tree = tree, 
+                   training_data = X_train, heatmap = FALSE)
+```
+
+```{r, fig.height=10, fig.width=16}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_prop <- getSigFeatures(fit, type = 'prop', prop = data_logit, 
+                              clinicaldata = clinicaldata, 
+                         outcome = "Gensini_bin")
+
+if(sum(stats_prop$stats$p.adj < 0.05) > 0){
+  plotSigFeatures(stats = stats_prop$stats, sigFeatures = stats_prop$sig_features, outcome = "Gensini bin")
+}
+
+```
+
+```{r, eval=T, fig.height=10, fig.width=16, eval=TRUE}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_prop_3 <- getSigFeatures(fit, type = 'prop',  
+                         prop = data_3_logit, clinicaldata = clinicaldata_3, 
+                         outcome = "Gensini_bin")
+
+if(sum(stats_prop_3$stats$p.adj < 0.05) > 0){
+  plotSigFeatures(stats = stats_prop_3$stats, sigFeatures = stats_prop_3$sig_features, outcome = "Gensini bin")
+}
+```
+
+# Look at just the means
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- markerMeanCellType %>%
+  as.matrix()
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+```
+
+## Testing
+```{r}
+X_test_study_3 <- markerMeanCellType_3 %>%
+  as.matrix()
+X_test_study_3 <- predict(scaleVals, X_test_study_3)
+```
+
+```{r}
+groups <- as.list(seq (1,ncol(markerMeanCellType),1)) 
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(x_train = X_train, y_train = y_train, groups = groups)
+```
+
+## Predict on the training data
+```{r}
+train_auc <- plotAUC(fit = fit$fit, x_test = X_train, y_test = condition, title = "Study 4 - Means AUC =")
+train_auc$plot
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, x_test = X_test_study_3, y_test = condition_3, title = "Study 3 - Means AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../auc_data/fs_glasso_auc_means_study_3_baseline.csv')
+
+```
+
+```{r, fig.height=10, fig.width=16}
+plotHeatmap(fit$fit, order = order)
+```
+
+```{r, eval=T, fig.height=10, fig.width=16}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_mean <- getSigFeatures(fit, type = 'mean',  
+                         mean = markerMeanCellType, clinicaldata = clinicaldata, 
+                         outcome = "Gensini_bin")
+
+if(sum(stats_mean$stats$p.adj < 0.05) > 0){
+  plotSigFeatures(stats = stats_mean$stats, sigFeatures = stats_mean$sig_features, outcome = "Gensini bin")
+}
+```
+
+## Study 3
+```{r, eval=T, fig.height=10, fig.width=16, eval=FALSE}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_mean_3 <- getSigFeatures(fit, type = 'mean',  
+                         mean = markerMeanCellType_3, clinicaldata = clinicaldata_3, 
+                         outcome = "Gensini_bin")
+
+if(sum(stats_mean_3$stats$p.adj < 0.05) > 0){
+  plotSigFeatures(stats = stats_mean_3$stats, sigFeatures = stats_mean_3$sig_features, outcome = "Gensini bin")
+}
+```

@@ -1,0 +1,317 @@
+---
+title: "cyCombine all batches"
+author: "Elijah WIllie"
+date: "2024-03-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = TRUE) 
+knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(reticulate)
+  use_virtualenv('r-keras', required = TRUE)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpregOverlap)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+  library(rstatix)
+  library(ggpubr)
+  library(mltest)
+  library(dendextend)
+  library(cyCombine)
+})
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/deep_learning_helper_funcs.R')
+set_random_seed(1994)
+# source('~/Documents/PhD/DeepLearning_CyTOF/robust_ae.R')
+```
+
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+
+final_celltypes <- c(
+   "B cells",
+   "CD8hi",
+   "14+ monos",
+   "CD4+ Tconv",
+   "CD8lo",
+   "NK",
+   "16+ monos",
+   "CD4+ Treg",
+   "pDCs",
+   "CD141+ DCs"
+    )
+
+```
+
+# Read in the datasets
+```{r}
+set.seed(1994)
+df_4 <- fread('../raw_data/bioheart_ct_cytof_data_b4_mg.csv',
+              nThread = 7) %>%
+  as.data.frame() %>%
+  dplyr::select(c(useMarkers, "sample_id", "CyTOF.Batch", "mg_cell_type_distinct"))
+
+# df_4 <- df_4[which(df_4$mg_cell_type_distinct != ""), ]
+
+colnames(df_4)[colnames(df_4) == "CyTOF.Batch"] = "batch_old"
+colnames(df_4)[colnames(df_4) == "mg_cell_type_distinct"] = "CellType"
+
+```
+
+```{r}
+set.seed(1994)
+df_3 <- fread('../Study_3_2019/all_batches_processed_mg_10K.csv',
+              nThread = 7) %>%
+  as.data.frame() %>%
+  dplyr::select(c(useMarkers,  "sample_id", "CellTypes", "Batch"))
+
+colnames(df_3)[colnames(df_3) == "Batch"] = "batch_old"
+colnames(df_3)[colnames(df_3) == "CellTypes"] = "CellType"
+```
+
+## Combine study 4 and study 3
+```{r}
+# cellTypes <- c(unique(df_4$CellType), 'T Cells', 'B Cells', 'pDCs')
+df <- rbind(df_4, df_3) %>%
+  dplyr::filter(CellType %in% final_celltypes)
+
+# update study information
+df$batch <- df$batch_old
+```
+
+```{r}
+df[, useMarkers] <- cyCombine::transform_asinh(df, markers = useMarkers)
+```
+
+# Do batch correction
+```{r}
+df_norm <- df %>%
+  batch_correct(markers = useMarkers,
+                seed = 1994,
+                norm_method = "scale", # "rank" is recommended when combining data with heavy batch effects
+                rlen = 10 # Consider a larger value, if results are not convincing (e.g. 100)
+                )
+```
+
+# Create single cell experiment object
+```{r}
+sce <- SingleCellExperiment(assays = list(counts = t((df[, useMarkers])),
+                                          corrected = t(df_norm[, useMarkers])
+),
+colData = df %>% dplyr::select(-useMarkers))
+```
+
+# Cluster into 12 clusters
+```{r, eval=T}
+# run FuseSOM clustering
+nclust = 10
+sce <- runFuseSOM(sce, numClusters = nclust, assay = 'corrected',
+                       verbose = FALSE, clusterCol = "clusters_cyCombine")
+```
+# Compute concordance on full data
+```{r, eval=T}
+computeConcordance(sce$clusters_cyCombine, sce$CellType)
+```
+```{r, eval=T}
+computeConcordance(sce$clusters_cyCombine, sce$batch)
+```
+
+# Train cell type model on all batches
+# Test on batch 3
+## MG
+```{r}
+train_batch <- df_norm[df_norm$batch %like% '4', ] %>%
+  dplyr::mutate(cellTypes = CellType) %>%
+  dplyr::select(c(useMarkers, cellTypes))
+test_batch <- df_norm[df_norm$batch %like% '3', ] %>%
+  dplyr::select(c(useMarkers, CellType))
+```
+
+## Select nop N sample
+```{r, eval=FALSE}
+res_ind <- ComputeReferenceSample(train_batch, markers = useMarkers, N = 2)
+train_batch_sub <- train_batch[which(train_batch$sample_id %in% res_ind$topNSamples), ] %>%
+  dplyr::select(-sample_id)
+```
+
+
+```{r}
+test_celltypes <- cellTypeClassifier(train_x = train_batch, 
+                                     test_x = test_batch[, useMarkers], model = 'lda')
+```
+
+```{r}
+computeConcordance(test_batch$CellType, test_celltypes)
+```
+
+```{r}
+MLmetrics::Accuracy(test_celltypes, test_batch$CellType)
+```
+
+```{r}
+MLmetrics::F1_Score(test_celltypes, test_batch$CellType)
+```
+
+```{r}
+classifier_metrics <- ml_test(test_celltypes, test_batch$CellType, output.as.table = F)
+classifier_metrics$balanced.accuracy
+classifier_metrics$F1
+```
+
+```{r}
+classifier_metrics_tab <- ml_test(test_celltypes, test_batch$CellType, output.as.table = T) %>%
+  dplyr::select(balanced.accuracy, F1) %>%
+  rownames_to_column(var = "Celltype")
+
+```
+
+
+# Generate classification bar-chart
+```{r}
+conf_matrix <- tibble("Truth" = test_batch$CellType,
+                    "Predicted" = test_celltypes) %>%
+  table()
+
+data <- as.data.frame(melt(conf_matrix))
+names(data) <- c("Truth", "Predicted", "Count")
+
+# Calculate the total support for each actual class
+total_support <- aggregate(Count ~ Truth, data = data, sum)
+
+# Merge total support back to the original data for proportions
+data <- merge(data, total_support, by = "Truth", all.x = TRUE)
+
+names(data)[names(data) == "Count.x"] <- "Count"
+names(data)[names(data) == "Count.y"] <- "TotalSupport"
+
+# Calculate proportion
+data$Proportion <- data$Count / data$TotalSupport
+
+# Creating the plot
+ggplot(data, aes(x = Truth, y = Proportion, fill = Predicted)) +
+  geom_bar(stat = "identity") +
+  labs(title = "cyCombine - Class Support and Prediction Proportions",
+       x = "Truth",
+       y = "Proportion of Total Support",
+       fill = "Predicted") +
+  theme_minimal() + 
+  theme_bw() +
+    theme(axis.text.x = element_text(size = 12),
+        plot.title = element_text(size = 15, hjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)
+        ) + scale_color_d3(palette = 'category20') + 
+  scale_fill_aaas()
+```
+
+# write predicted data to file
+```{r}
+# write balanced accuracy and F1
+write.csv(classifier_metrics_tab, '../concordance_data/cyCombine_batch_3_pred_acc.csv',
+          row.names = F)
+
+# write plot data
+write.csv(data, '../concordance_data/cyCombine_batch_3_pred_data.csv',
+          row.names = F)
+```
+
+# Test on each batch 
+## MG
+```{r, eval=FALSE}
+batches <- unique(df_norm$batch)
+ari_mg <- c()
+nmi_mg <- c()
+for(batch in batches){
+  set.seed(1994)
+  message(paste0("Now prediction on batch: ", batch))
+  df_batch <- df_norm[df_norm$batch == batch, ]
+  df_norm_sub <- df_norm[df_norm$batch != batch, ] %>%
+  group_by(clusters_mg) %>%
+  slice_sample(n = 1000)
+  nnet_model_mg <- fitCelltypeModel(train_x = df_norm_sub[, useMarkers],
+                                  train_y = df_norm_sub$clusters_mg)
+  batch_clusters_mg <- nnet_model_mg %>%
+    predict(as.matrix(df_batch[, useMarkers]))
+  pred_clusters_mg <- batch_clusters_mg$predicted
+  concor_mg <- computeConcordance(df_batch$clusters_mg, pred_clusters_mg)
+  ari_mg <- c(ari_mg, concor_mg$ARI)
+  nmi_mg <- c(nmi_mg, concor_mg$NMI)
+}
+```
+## FuseSOM clusters
+```{r, eval=FALSE}
+ari_fs <- c()
+nmi_fs <- c()
+for(batch in batches){
+  set.seed(1994)
+  message(paste0("Now prediction on batch: ", batch))
+  df_batch <- df_norm[df_norm$batch == batch, ]
+  df_norm_sub <- df_norm[df_norm$batch != batch, ] %>%
+  group_by(clusters_fs) %>%
+  slice_sample(n = 1000)
+  nnet_model_fs <- fitCelltypeModel(train_x = df_norm_sub[, useMarkers],
+                                  train_y = df_norm_sub$clusters_fs)
+  batch_clusters_fs <- nnet_model_fs %>%
+    predict(as.matrix(df_batch[, useMarkers]))
+  pred_clusters_fs <- batch_clusters_fs$predicted
+  concor_fs <- computeConcordance(df_batch$clusters_fs, pred_clusters_fs)
+  ari_fs <- c(ari_fs, concor_fs$ARI)
+  nmi_fs <- c(nmi_fs, concor_fs$NMI)
+}
+```
+
+# Collate the final data
+```{r, eval=FALSE}
+dat_final_mg <- data.frame(Batch = batches, ARI = ari_mg, 
+                           NMI = nmi_mg, Cluster = rep('MG', length(batches)))
+dat_final_fs <- data.frame(Batch = batches, ARI = ari_fs, 
+                           NMI = nmi_fs, Cluster = rep('FuseSOM', length(batches)))
+
+dat_final <- rbind(dat_final_mg, dat_final_fs)
+
+write.csv(dat_final, '../concordance_data/cyCombine_all_batches.csv', row.names = F)
+```
+
+# Save SCE object
+```{r, eval=T}
+save(sce, file = "../sce_dat/bioheart_cyCombine_batch_corrected.RData")
+```

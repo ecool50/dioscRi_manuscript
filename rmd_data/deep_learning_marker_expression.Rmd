@@ -1,0 +1,196 @@
+---
+title: "Marker expression evaluation"
+author: "Elijah WIllie"
+date: "2024-05-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = TRUE) 
+knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(reticulate)
+  use_virtualenv('keras_env', required=TRUE)
+  library(keras)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(SKM)
+  library(caret)
+  library(ROCR)
+  library(cvAUC)
+  library(spicyR)
+  library(cyCombine)
+  library(ClassifyR)
+  library(cowplot)
+  library(psych)
+  library(igraph)
+  library(tensorflow)
+  library(Spectrum)
+  library(glmnet)
+  library(ipflasso)
+  library(prioritylasso)
+  library(hopach)
+  library(rpart)
+  library(rpart.plot)
+  # library(ruta)
+  library(ggtree)
+  library(ape)
+  library(grpregOverlap)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+
+k = backend()     # this where the software used to break
+source('~/Documents/PhD/bioheart_analysis/scripts/autoClass.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/deep_learning_helper_funcs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/customCV.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/predClusters.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/trainClassifier.R')
+# source('~/Documents/PhD/DeepLearning_CyTOF/robust_ae.R')
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+# Read in the dataset
+## Study 4
+```{r}
+# study 4
+set.seed(1994)
+df <- fread('../raw_data/bioheart_ct_cytof_data_b4_mg.csv',
+              nThread = 7) %>%
+  as.data.frame() 
+
+df[, useMarkers] <- log(abs(df[, useMarkers]) + 1)
+
+# 
+preProcValues <- preProcess(df[, useMarkers], method = c("range"))
+# 
+df[, useMarkers] <- predict(preProcValues, df[, useMarkers])
+
+```
+
+## Study 3
+```{r}
+df_3 <- fread('../raw_data/study_3_sub.csv',
+              nThread = 7) %>% 
+  as.data.frame() 
+df_3$Gensini_bin <- factor(if_else(df_3$Gensini > 0, 1, 0))
+
+df_3[, useMarkers] <- log(abs(df_3[, useMarkers]) + 1)
+
+df_3[, useMarkers] <- predict(preProcValues, df_3[, useMarkers])
+```
+
+# Get the reference sample for training
+```{r}
+res_ind <- ComputeReferenceSample(df, useMarkers)
+```
+
+# Get the encoding dimensions and the number of clusters 
+```{r}
+train_dat <- df[which(df$sample_id == res_ind$refSampleInd), useMarkers]
+encoding_dim <- FuseSOM::computeGridSize(train_dat[, useMarkers])
+```
+
+
+# Define autoencoder model
+```{r, echo=FALSE}
+models <- autoEncoderModel(train_dat = train_dat, input_size = length(useMarkers),
+                           encoding_dim = encoding_dim*2, l2_reg = 5E-04, 
+                           dropout_rate = 0)
+```
+
+# Predict on study 4
+```{r}
+df_norm <- predict(models$autoencoder_model, as.matrix(df[, useMarkers])) %>%
+  as.data.frame()
+
+colnames(df_norm) <- useMarkers
+```
+
+# Predict on study 3
+```{r}
+df_3_norm <- predict(models$autoencoder_model, as.matrix(df_3[, useMarkers])) %>%
+  as.data.frame()
+colnames(df_3_norm) <- useMarkers
+```
+
+```{r}
+df_norm$sample_id <- df$sample_id
+df_norm$Gender <- df$Gender
+df_norm$gensini_bin <- df$gensini_bin
+
+stat_test_study_4 <- df_norm %>%
+  dplyr::select(c(useMarkers, "sample_id", "Gender", "gensini_bin")) %>%
+  dplyr::group_by(sample_id, Gender, gensini_bin) %>%
+  summarise_at(useMarkers, mean) %>%
+  pivot_longer(-c(Gender, sample_id, gensini_bin), names_to = "variables", values_to = "value") %>%
+  group_by(variables) %>%
+  t_test(value ~ Gender) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+stat_test_study_4
+```
+
+
+```{r}
+df_3_norm$sample_id <- df_3$sample_id
+df_3_norm$Gender <- df_3$Gender
+df_3_norm$gensini_bin <- df_3$Gensini_bin
+
+stat_test_study_3 <- df_3_norm %>%
+  dplyr::select(c(useMarkers, "sample_id", "Gender", "gensini_bin")) %>%
+  dplyr::group_by(sample_id, Gender, gensini_bin) %>%
+  summarise_at(useMarkers, mean) %>%
+  pivot_longer(-c(Gender, sample_id, gensini_bin), names_to = "variables", values_to = "value") %>%
+  group_by(variables) %>%
+  t_test(value ~ Gender) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+stat_test_study_3
+```
+
+```{r}
+data.frame(Study_4 = stat_test_study_4$statistic,
+                      Study_3 = stat_test_study_3$statistic) %>%
+  ggscatter(x = "Study_4", y = "Study_3",
+   add = "reg.line",  # Add regressin line
+   add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+   conf.int = TRUE # Add confidence interval
+   ) + 
+  stat_cor(aes(label = ..r.label..), label.x = 3)
+```

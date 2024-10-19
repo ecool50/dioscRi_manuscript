@@ -1,0 +1,329 @@
+---
+title: "Deep Lasso all batches"
+author: "Elijah WIllie"
+date: "2024-03-19"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = TRUE) 
+knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(reticulate)
+  library(keras)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(SKM)
+  library(caret)
+  library(ROCR)
+  library(cvAUC)
+  library(spicyR)
+  library(cyCombine)
+  library(ClassifyR)
+  library(cowplot)
+  library(psych)
+  library(igraph)
+  library(tensorflow)
+  library(Spectrum)
+  library(glmnet)
+  library(ipflasso)
+  library(prioritylasso)
+  library(hopach)
+  library(rpart)
+  library(rpart.plot)
+  # library(ruta)
+  library(ggtree)
+  library(ape)
+  library(grpregOverlap)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+
+k = backend()     # this where the software used to break
+source('~/Documents/PhD/bioheart_analysis/scripts/autoClass.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/customCV.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/predClusters.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/trainClassifier.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/deep_learning_helper_funcs.R')
+# source('~/Documents/PhD/DeepLearning_CyTOF/robust_ae.R')
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+
+cellTypes <- c(
+    "CD4+ CCR4+ Treg",
+    "CD4+ CD38+RO+ Treg",
+    "CD4+ DR+ Treg",
+    "CD4+ Ki67+ Treg",
+    "CD4+ Tconv",
+    "CD4+ Treg",
+    "CD4+ CCR6+ Treg",
+    "B cells",
+    "CXCR3+ B cells",
+    "myeloids"
+    )
+```
+
+# Read in the datasets
+```{r}
+set.seed(1994)
+df_4 <- fread('../raw_data/bioheart_ct_cytof_data_b4_mg.csv',
+              nThread = 7) %>%
+  as.data.frame() %>%
+  dplyr::select(c(useMarkers, "sample_id", "CyTOF.Batch", "mg_cell_type_clean"))
+
+# df_4 <- df_4[which(df_4$mg_cell_type_distinct != ""), ]
+
+colnames(df_4)[colnames(df_4) == "CyTOF.Batch"] = "batch_old"
+colnames(df_4)[colnames(df_4) == "mg_cell_type_clean"] = "CellType"
+
+```
+
+```{r}
+df_3 <- fread('../Study_3_2019/all_batches_processed_mg_sub_10K_time.csv',
+              nThread = 7) %>%
+  as.data.frame() %>%
+  dplyr::select(c(useMarkers,  "sample_id", "CellTypes", "Batch"))
+
+colnames(df_3)[colnames(df_3) == "Batch"] = "batch_old"
+colnames(df_3)[colnames(df_3) == "CellTypes"] = "CellType"
+```
+
+## Combine study 4 and study 3
+```{r}
+df <- rbind(df_4, df_3) %>%
+  dplyr::filter(CellType %in% cellTypes)
+
+# update study information
+df$batch <- if_else(df$batch_old %like% 4, 4, 3)
+```
+
+```{r}
+df$CellType <- dplyr::recode(df$CellType,
+                             "CD4+ CCR4+ Treg" = "Tregs",
+                            "CD4+ CD38+RO+ Treg" = "Tregs",
+                            "CD4+ DR+ Treg" = "Tregs",
+                            "CD4+ Ki67+ Treg" = "Tregs",
+                            "CD4+ Tconv" = "Tconvs",
+                            "CD4+ Treg" = "Tregs",
+                            "CD4+ CCR6+ Treg" = "Tregs",
+                            "B cells" = "B Cells",
+                            "CXCR3+ B cells" = "B Cells",
+                            "myeloids" = "Myeloids"
+                             )
+```
+
+# Scale the data for deep learning
+```{r}
+df[, useMarkers] <- log(abs(df[, useMarkers]) + 1)
+# df[, useMarkers] <- cyCombine::transform_asinh(df, markers = useMarkers)
+# 
+preProcValues <- preProcess(df[, useMarkers], method = c("range"))
+# 
+df[, useMarkers] <- predict(preProcValues, df[, useMarkers])
+```
+
+
+# Get the reference sample for training
+```{r}
+res_ind <- ComputeReferenceSample(df, useMarkers)
+```
+
+# Get the encoding dimensions and the number of clusters 
+```{r}
+train_dat <- df[which(df$sample_id == res_ind$refSampleInd), useMarkers]
+encoding_dim <- FuseSOM::computeGridSize(train_dat[, useMarkers])
+```
+
+
+# Define autoencoder model and train on all batches
+```{r, echo=FALSE}
+models <- autoEncoderModel(train_dat = train_dat, input_size = length(useMarkers),
+                           encoding_dim = encoding_dim*2, l2_reg = 5E-02)
+
+# model  <- robust_ae(train_dat[, useMarkers], encoding_dim = encoding_dim*2, batch_size = 16, epochs = 100)
+```
+
+# Predict on all batches
+```{r}
+df_norm <- predict(models$autoencoder_model, as.matrix(df[, useMarkers])) %>%
+  as.data.frame()
+
+colnames(df_norm) <- useMarkers
+
+# df_latent <- predict(models$encoder_model, as.matrix(df[, useMarkers])) %>%
+#   as.data.frame()
+```
+
+# Create SCE object for study 4
+```{r}
+# df_norm <- df_norm %>%
+#   as.data.frame()
+sce_norm <- SingleCellExperiment(assays = list(norm = t(df_norm[, useMarkers]),
+                                               raw = t(df[, useMarkers])
+),
+colData = df %>% dplyr::select(-useMarkers))
+# sce_norm$clusters <- y_pred
+```
+
+# Cluster the normalised data into 12 clusters to match MG
+```{r}
+nclust = 4
+sce_norm <- runFuseSOM(sce_norm, numClusters = nclust, assay = 'norm',
+                       verbose = FALSE)
+```
+# Compute concordance on full data
+```{r}
+computeConcordance(sce_norm$clusters, sce_norm$CellType)
+```
+# Train cell type model on all batches
+## Select training data
+```{r}
+set.seed(1994)
+# df_norm <- df_norm
+df_norm$clusters_mg <- sce_norm$CellType
+# df_norm$clusters_mg <- factor(sce_norm$mg_cell_type_distinct)
+df_norm$sample_id <- sce_norm$sample_id
+df_norm$batch <- sce_norm$batch
+df_norm$clusters_fs <- sce_norm$clusters
+```
+
+# Test on batchh 3
+## MG
+```{r}
+train_batch <- df_norm[df_norm$batch == '4', ]
+train_batch_sub <- train_batch %>%
+  group_by(clusters_mg) %>%
+  slice_sample(n = min(table(train_batch$clusters_mg)))
+```
+
+```{r}
+LDAclassifier <- MASS::lda(as.matrix(train_batch_sub[, useMarkers]),train_batch_sub$clusters_mg)
+```
+
+
+```{r}
+test_batch <- df_norm[df_norm$batch == '3', ]
+```
+
+```{r}
+Predictions <- predict(LDAclassifier,as.matrix(test_batch[, useMarkers]))
+Post.max <-apply(Predictions$posterior,1,max)
+Predictions$class <- factor(Predictions$class,levels = levels(Predictions$class))
+# Predictions$class[Post.max < RejectionThreshold] <- "unknown"
+Predictions <- Predictions$class
+```
+
+
+```{r}
+computeConcordance(test_batch$clusters_mg, Predictions)
+```
+
+# plot confusion matrix
+```{r}
+res_table <- tibble("target" = test_batch$clusters_mg,
+                    "prediction" = Predictions)
+cfm <- table(res_table) %>% 
+  as_tibble()
+```
+
+```{r}
+plot_confusion_matrix(cfm, 
+                      target_col = "target", 
+                      prediction_col = "prediction",
+                      counts_col = "n", rotate_y_text = F,
+                      add_counts = F)
+```
+
+
+
+```{r,eval=FALSE}
+batches <- unique(df_norm$batch)
+ari_mg <- c()
+nmi_mg <- c()
+for(batch in batches){
+  set.seed(1994)
+  message(paste0("Now prediction on batch: ", batch))
+  df_batch <- df_norm[df_norm$batch == batch, ]
+  
+  min_val <- table(df_norm[df_norm$batch != batch, ]$clusters_mg) %>%
+    min
+  df_norm_sub <- df_norm[df_norm$batch != batch, ] %>%
+  group_by(clusters_mg) %>%
+  slice_sample(n = min_val)
+  nnet_model_mg <- fitCelltypeModel(train_x = df_norm_sub[, useMarkers],
+                                  train_y = df_norm_sub$clusters_mg)
+  batch_clusters_mg <- nnet_model_mg %>%
+    predict(as.matrix(df_batch[, useMarkers]))
+  pred_clusters_mg <- batch_clusters_mg$predicted
+  concor_mg <- computeConcordance(df_batch$clusters_mg, pred_clusters_mg)
+  ari_mg <- c(ari_mg, concor_mg$ARI)
+  nmi_mg <- c(nmi_mg, concor_mg$NMI)
+}
+```
+## FuseSOM clusters
+```{r, eval=FALSE}
+ari_fs <- c()
+nmi_fs <- c()
+for(batch in batches){
+  set.seed(1994)
+  message(paste0("Now prediction on batch: ", batch))
+  df_batch <- df_norm[df_norm$batch == batch, ]
+  df_norm_sub <- df_norm[df_norm$batch != batch, ] %>%
+  group_by(clusters_fs) %>%
+  slice_sample(n = 1000)
+  nnet_model_fs <- fitCelltypeModel(train_x = df_norm_sub[, useMarkers],
+                                  train_y = df_norm_sub$clusters_fs)
+  batch_clusters_fs <- nnet_model_fs %>%
+    predict(as.matrix(df_batch[, useMarkers]))
+  pred_clusters_fs <- batch_clusters_fs$predicted
+  concor_fs <- computeConcordance(df_batch$clusters_fs, pred_clusters_fs)
+  ari_fs <- c(ari_fs, concor_fs$ARI)
+  nmi_fs <- c(nmi_fs, concor_fs$NMI)
+}
+```
+
+# Collate the final data
+```{r,, eval=FALSE}
+dat_final_mg <- data.frame(Batch = batches, ARI = ari_mg, 
+                           NMI = nmi_mg, Cluster = rep('MG', length(batches)))
+dat_final_fs <- data.frame(Batch = batches, ARI = ari_fs, 
+                           NMI = nmi_fs, Cluster = rep('FuseSOM', length(batches)))
+
+dat_final <- rbind(dat_final_mg, dat_final_fs)
+
+write.csv(dat_final, '../concordance_data/deep_learning_all_batches.csv', row.names = F)
+```
+

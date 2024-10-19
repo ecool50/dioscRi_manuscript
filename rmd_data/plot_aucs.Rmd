@@ -1,0 +1,314 @@
+---
+title: "Plot AUCs"
+author: "Elijah WIllie"
+date: "2024-08-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(cvAUC)
+  library(zoo)
+  library(pROC)
+  library(data.table)
+})
+```
+# Define plotting function
+```{r}
+#' Functions plots multiple 'roc' objects into one plot
+#' @param rocs
+#'   A list of 'roc' objects. Every list item has a name.
+#' @param breaks
+#'   A vector of integers representing ticks on the x- and y-axis
+#' @param legentTitel
+#'   A string which is used as legend titel
+ggrocs <- function(rocs, breaks = seq(0,1,0.1), legendTitle = "Legend", data_name = "") {
+  if (length(rocs) == 0) {
+    stop("No ROC objects available in param rocs.")
+  } else {
+    require(plyr)
+    # Store all sensitivities and specifivities in a data frame
+    # which an be used in ggplot
+    RocVals <- plyr::ldply(names(rocs), function(rocName) {
+      if(class(rocs[[rocName]]) != "roc") {
+        stop("Please provide roc object from pROC package")
+      }
+      data.frame(
+        fpr = rev(rocs[[rocName]]$specificities),
+        tpr = rev(rocs[[rocName]]$sensitivities),
+        names = rep(rocName, length(rocs[[rocName]]$sensitivities)),
+        stringAsFactors = T
+      )
+    })
+    
+    aucs <- sapply(rocs, "[[", "auc")
+    
+    RocVals$names[RocVals$names == "Manual Gating"] <- paste0("Manual Gating (AUC = ", round(aucs[[1]], 2), ")")
+    RocVals$names[RocVals$names == "Clustering"] <- paste0("Clustering (AUC = ", round(aucs[[2]], 2), ")")
+    
+    rocPlot <- ggplot(RocVals, aes(x = fpr, y = tpr, colour = names)) +
+      geom_segment(aes(x = 0, y = 1, xend = 1,yend = 0), alpha = 0.5, 
+                   colour = "black", linewidth = 1) + 
+      geom_line(aes(color = names), linewidth = 1)  +
+    scale_x_reverse(name = "False Positive Rate (1 - Specificity)",limits = c(1,0), breaks = breaks) + 
+      scale_y_continuous(name = "True Positive Rate (Sensitivity)", limits = c(0,1), breaks = breaks) +
+      theme_bw() + 
+      # coord_equal() + 
+      ggtitle(data_name) +
+      guides(colour = guide_legend(legendTitle)) +
+      theme(axis.ticks = element_line(color = "grey80")) +
+      # theme_bw() +
+      theme(plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+            plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+            axis.title.x = element_text(color="Black", size=12),
+            axis.title.y = element_text(color="Black", size=12),
+            axis.text.y = element_text(size = 12),
+            axis.text.x = element_text(size = 12),
+            strip.text.x = element_text(size = 12),
+            legend.title = element_blank(), #change legend title font size
+            legend.text = element_text(size=12), #change legend text font size))
+            legend.position = c(1, 0), 
+            legend.justification = c(1, 0), 
+            legend.background = ggplot2::element_rect(fill = "transparent"))
+    
+    rocPlot
+  }
+}
+```
+
+# BioHEART-CT Study 3 - Basline models
+```{r, fig.height=6, fig.width=6}
+baseline_mg <- fread('../auc_data/mg_glasso_auc_all_study_3_baseline.csv')
+baseline_fs <- fread('../auc_data/fs_glasso_auc_all_study_3_baseline.csv')
+
+baseline_mg_roc <- roc(baseline_mg, Truth, Predicted)
+baseline_fs_roc <- roc(baseline_fs, Truth, Predicted)
+
+p.baseline <- ggrocs(rocs = list("Manual Gating" = baseline_mg_roc, "Clustering" = baseline_fs_roc), 
+        data_name = "Baseline", legendTitle = "Method")
+```
+
+
+# BioHEART-CT Study 3 - Full Model
+```{r, fig.height=6, fig.width=6}
+full_mg <- fread('../auc_data/mg_glasso_auc_all_study_3.csv')
+full_fs <- fread('../auc_data/fs_glasso_auc_all_study_3.csv')
+
+full_mg_roc <- roc(full_mg, Truth, Predicted)
+full_fs_roc <- roc(full_fs, Truth, Predicted)
+
+p.norm <- ggrocs(rocs = list("Manual Gating" = full_mg_roc, "Clustering" = full_fs_roc), 
+        data_name = "Normalised", legendTitle = "Method")
+```
+```{r, fig.width=12, fig.height=6}
+pdf(file = "../Plots/Manuscript_Plots/Figure_3.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+
+cowplot::plot_grid(p.baseline, p.norm, labels = LETTERS[1:2])
+
+dev.off()
+```
+
+
+# BioHEART-CT Study 3 - Clusters
+```{r, fig.height=10, fig.width=16}
+all_dat <- fread('../auc_data/fs_glasso_auc_all_study_3.csv')
+prop_dat <- fread('../auc_data/fs_glasso_auc_prop_study_3.csv')
+means_dat <-fread('../auc_data/fs_glasso_auc_means_study_3.csv')
+
+all_dat_roc <- roc(all_dat, truth, pred_test)
+prop_dat_roc <- roc(prop_dat, truth, pred_test)
+means_dat_roc <- roc(means_dat, truth, pred_test)
+
+ggrocs(rocs = list("All" = all_dat_roc, "Proportions" = prop_dat_roc, "Means" = means_dat_roc), 
+        data_name = "BioHEART-CT Study 3", legendTitle = "Method")
+```
+
+# BioHEART-CT Study 3 - Manual Gates
+```{r, fig.height=10, fig.width=16}
+all_dat <- fread('../auc_data/mg_glasso_auc_all_study_3.csv')
+prop_dat <- fread('../auc_data/mg_glasso_auc_prop_study_3.csv')
+means_dat <-fread('../auc_data/mg_glasso_auc_means_study_3.csv')
+
+all_dat_roc <- roc(all_dat, truth, pred_test)
+prop_dat_roc <- roc(prop_dat, truth, pred_test)
+means_dat_roc <- roc(means_dat, truth, pred_test)
+
+ggrocs(rocs = list("All" = all_dat_roc, "Proportions" = prop_dat_roc, "Means" = means_dat_roc), 
+        data_name = "BioHEART-CT Study 3", legendTitle = "Method")
+```
+
+
+# Look at classification performance between baseline and full model
+```{r}
+dat_fs <- data.frame(sample_id = full_fs$V1, Truth = as.factor(full_fs$Truth),
+                     Baseline = baseline_fs$Predicted, Glasso = full_fs$Predicted)
+
+dat_fs %>% ggplot(aes(Baseline,Glasso)) +
+  geom_point(aes(color = Truth))
+```
+# filter to "bad" samples
+```{r}
+dat_fs_filtered <- dat_fs %>%
+  dplyr::filter(Glasso < 0.8 & Baseline > 0.7)
+```
+
+# Read in the sce object for study 3
+```{r}
+load('../sce_dat/study_4_MMD_VAE_sce.RData')
+load('../sce_dat/study_3_MMD_VAE_sce.RData')
+```
+
+# Define cell types of interest
+```{r}
+final_celltypes <- c(
+   "B cells",
+   "CD8hi",
+   "14+ monos",
+   "CD4+ Tconv",
+   "CD8lo",
+   "NK",
+   "16+ monos",
+   "CD4+ Treg",
+   "pDCs",
+   "CD141+ DCs"
+    )
+```
+
+## Set up training and testing data
+```{r}
+x_train <- assay(sce_norm, "raw") %>%
+  t() %>%
+  as.data.frame() %>%
+   # mutate(sample_id = sce_norm$sample_id) %>%
+  mutate(cellTypes = factor(sce_norm$mg_cell_type_distinct)) %>%
+  dplyr::filter(cellTypes %in% final_celltypes) %>%
+  # dplyr::filter(sample_id %in% res_ind$topNSamples) %>%
+  # dplyr::select(-sample_id) %>%
+  mutate(cellTypes = droplevels(cellTypes))
+
+x_test <- assay(sce_3_norm, "raw") %>%
+  t() %>%
+  as.data.frame() %>%
+  mutate(cellTypes = factor(sce_3_norm$CellTypes)) %>%
+  dplyr::filter(cellTypes %in% final_celltypes) %>%
+  mutate(cellTypes = droplevels(cellTypes))
+```
+
+## Predict cell types using SVM with a linear kernel
+```{r}
+df_3_clusters <- cellTypeClassifier(train_x = x_train, test_x = x_test, model = 'lda')
+```
+
+# Subset to bad samples
+```{r}
+sce_sub <- sce_3_norm[, sce_3_norm$CellTypes %in% final_celltypes]
+sce_sub$mg_clusters <- as.factor(df_3_clusters)
+sce_sub <- sce_sub[, sce_sub$sample_id %in% dat_fs_filtered$sample_id]
+```
+
+```{r}
+computeConcordance(sce_sub[, sce_sub$CellTypes %in% final_celltypes]$mg_clusters, 
+                   sce_sub[, sce_sub$CellTypes %in% final_celltypes]$CellTypes)
+```
+
+```{r}
+MLmetrics::Accuracy(sce_sub[, sce_sub$CellTypes %in% final_celltypes]$mg_clusters, 
+                   sce_sub[, sce_sub$CellTypes %in% final_celltypes]$CellTypes)
+```
+
+```{r}
+classifier_metrics <- ml_test(sce_sub[, sce_sub$CellTypes %in% final_celltypes]$mg_clusters,  
+                   sce_sub[, sce_sub$CellTypes %in% final_celltypes]$CellTypes, output.as.table = F)
+classifier_metrics$balanced.accuracy
+classifier_metrics$F1
+```
+
+# Look at distribution plots
+```{r}
+p.raw <- assay(sce_sub, 'raw') %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::mutate(Sample = as.factor(sce_sub$sample_id)) %>%
+  ggplot(aes(x = CD3)) +
+  geom_density(aes(colour = Sample)) +
+  theme(legend.position = "none") +
+  ggtitle("Study 3: CD3 - Unnormalised")
+
+p.norm <- assay(sce_sub, 'norm') %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::mutate(Sample = as.factor(sce_sub$sample_id)) %>%
+  ggplot(aes(x = CD3)) +
+  geom_density(aes(colour = Sample)) +
+  ggtitle("Study 3: CD3 - Normalised")
+```
+
+
+```{r}
+df_raw_melted <- assay(sce_sub, 'raw') %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::mutate(Sample = as.factor(sce_sub$sample_id)) %>%
+  melt()
+df_raw_melted$data <- rep("Raw", nrow(df_raw_melted))
+
+df_norm_melted <- assay(sce_sub, 'norm') %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::mutate(Sample = as.factor(sce_sub$sample_id)) %>%
+  melt()
+df_norm_melted$data <- rep("Norm", nrow(df_norm_melted))
+
+
+df_melted_all <- rbind(df_raw_melted, df_norm_melted)
+```
+
+```{r}
+p.raw.all <- df_raw_melted %>%
+  ggplot(aes(x = value)) +
+  geom_boxplot(aes(colour = Sample)) +
+  coord_flip() + 
+  facet_wrap(~variable, scales = 'free') +
+  scale_color_aaas()
+
+p.norm.all <-  df_norm_melted %>%
+  ggplot(aes(x = value)) +
+  geom_boxplot(aes(colour = Sample)) +
+  coord_flip() + 
+  facet_wrap(~variable, scales = 'free') +
+  scale_color_aaas()
+```
+
+# generate side by side boxplots
+```{r}
+df_melted_all %>%
+  ggplot(aes(x = value)) +
+  geom_boxplot(aes(colour = Sample)) +
+  coord_flip() + 
+  facet_wrap(variable ~ data, scales = 'free') +
+  scale_color_aaas()
+```
+
+# generate side by side density plots
+```{r}
+df_melted_all %>%
+  ggplot(aes(x = value)) +
+  geom_density(aes(colour = Sample)) +
+  facet_wrap(variable ~ data, scales = 'free') +
+  scale_color_aaas()
+```

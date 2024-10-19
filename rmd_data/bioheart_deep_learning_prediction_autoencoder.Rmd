@@ -1,0 +1,220 @@
+---
+  title: "bioheart Deep Learning"
+author: "Elijah WIllie"
+date: "2024-03-15"
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = TRUE) 
+knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(reticulate)
+  use_virtualenv('r-keras', required = TRUE)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpregOverlap)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+  library(rstatix)
+  library(ggpubr)
+})
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/autoClass.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/vae_model.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/customCV.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/vae_class_model.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/deep_learning_helper_funcs.R')
+set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+
+# Read in the dataset
+## Study 4
+```{r}
+# study 4
+set.seed(1994)
+df <- fread('../raw_data/bioheart_ct_cytof_data_b4_mg.csv',
+              nThread = 7) %>%
+  as.data.frame() %>%
+  dplyr::filter(mg_cell_type_distinct != "")
+
+df_asinh <- df
+# df_asinh <- df[rowsum_df != 0, ]
+```
+
+```{r, eval=FALSE}
+df$mg_cell_type_distinct <- dplyr::recode(df$mg_cell_type_distinct,
+                             "CD141+ DCs" = "DCs",
+                            "CD1c+ DCs" = "DCs",
+                            
+                             )
+```
+
+# asinh norm
+```{r}
+df_asinh[, useMarkers] <- cyCombine::transform_asinh(df_asinh[, useMarkers], markers = useMarkers)
+
+preProcValues <- preProcess(df_asinh[, useMarkers], method = c("range"))
+#
+df_asinh[, useMarkers] <- predict(preProcValues, df_asinh[, useMarkers])
+```
+
+
+## Study 3
+```{r}
+set.seed(1994)
+df_3 <- fread('../Study_3_2019/all_batches_processed_mg_10K.csv',
+              nThread = 7) %>% 
+  as.data.frame()
+
+# %>%
+#   group_by(sample_id)
+df_3[, useMarkers] <- cyCombine::transform_asinh(df_3[, useMarkers], markers = useMarkers)
+df_3[, useMarkers] <- predict(preProcValues, df_3[, useMarkers])
+```
+
+# Get the reference sample for training
+```{r}
+res_ind <- ComputeReferenceSample(df_asinh, useMarkers)
+```
+
+
+# Get the encoding dimensions and the number of clusters 
+```{r, eval=T}
+train_dat <- df_asinh[which(df_asinh$sample_id %in% c(res_ind$refSampleInd, res_ind$valSampleInd, res_ind$medianSampleInd)), ]
+encoding_dim <- FuseSOM::computeGridSize(train_dat[, useMarkers])
+```
+
+
+# Define autoencoder model
+```{r}
+models <- autoEncoderModel(train_dat = train_dat[, useMarkers], input_size = length(useMarkers),
+                           encoding_dim = 16, l2_reg = 5E-04,
+                           dropout_rate = 0.0, epochs = 80)
+```
+
+# Predict on study 4
+```{r, eval=T}
+df_norm <- predict(models$autoencoder_model, as.matrix(df[, useMarkers])) %>%
+  as.data.frame()
+
+colnames(df_norm) <- useMarkers
+```
+
+# Predict on study 3
+```{r, eval=T}
+df_3_norm <- predict(models$autoencoder_model, as.matrix(df_3[, useMarkers])) %>%
+  as.data.frame()
+
+colnames(df_3_norm) <- useMarkers
+```
+
+# Create SCE object for study 4 and cluster it
+```{r}
+sce_norm <- SingleCellExperiment(assays = list(norm = t(df_norm[, useMarkers]),
+                                               raw = t(df_asinh[, useMarkers])
+),
+colData = df_asinh %>% dplyr::select(-useMarkers))
+# sce_norm$clusters <- train_decoded$cell_types
+# nclust <- length(unique(sce_norm$mg_cell_type_clean))
+```
+
+
+## Use FuseSOM to cluster the normalised data
+```{r}
+# run FuseSOM clustering
+nclust = 10
+sce_norm <- runFuseSOM(sce_norm, numClusters = nclust, assay = 'norm',
+                       verbose = FALSE, clusterCol = 'clusters')
+# sce_norm$clusters <- sce_temp$clusters
+```
+
+
+```{r}
+computeConcordance(sce_norm$clusters, sce_norm$mg_cell_type_distinct)
+```
+# Compute training features
+
+## Proportions
+```{r}
+# do prediction
+data <- getProp(sce_norm,
+                feature = "clusters", imageID = "sample_id", logit = F)
+
+dat_prop <- data
+data <- 2*asin(sqrt(data))
+
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Gender, Age) %>%
+  distinct()
+clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+
+row_names <- rownames(data)
+
+Age <- clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Age"]
+GenderM <- clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      c("GenderM")]
+
+clinicaldata_info <- cbind(Age, GenderM)
+
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Gensini_bin"])
+
+
+data_logit <- getProp(sce_norm,
+                feature = "clusters", imageID = "sample_id", logit = T)
+colnames(data_logit) <- paste0(colnames(data_logit), "_logit")
+colnames(data) <- paste0(colnames(data), "_prop")
+colnames(dat_prop) <- colnames(data)
+```

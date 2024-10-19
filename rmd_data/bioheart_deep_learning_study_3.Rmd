@@ -1,0 +1,300 @@
+---
+title: "Bioheart Study 3 Deep Learning"
+author: "Elijah Willie"
+date: "2023-08-17"
+output:
+  html_document:
+    toc: true
+    code_folding: hide
+    self_contained: yes
+    theme: journal
+    number_sections: no
+    fig_width: 12
+    fig_height: 8
+    fontsize: 16pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = TRUE) 
+knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+# theme_set(theme_classic())
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(reticulate)
+  library(keras)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(SKM)
+  library(caret)
+  library(ROCR)
+  library(cvAUC)
+  library(spicyR)
+  library(cyCombine)
+  library(ClassifyR)
+  library(cowplot)
+  library(psych)
+  library(igraph)
+  library(tensorflow)
+  library(Spectrum)
+  library(glmnet)
+  library(ipflasso)
+  library(prioritylasso)
+  library(hopach)
+  library(betacal)
+  # library(ruta)
+})
+
+k = backend()     # this where the software used to break
+source('~/Documents/PhD/bioheart_analysis/scripts/autoClass.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/customCV.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/predClusters.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/trainClassifier.R')
+# source('~/Documents/PhD/DeepLearning_CyTOF/robust_ae.R')
+```
+
+# Read in the dataset
+```{r}
+# study 4
+df <- fread('..//raw_data/study_3_sub.csv',
+              nThread = 7) %>%
+  as.data.frame() 
+
+# %>%
+#   group_by(sample_id) %>%
+#   slice_sample(n=1000, replace = FALSE)
+
+# select cells with age >= 55
+# df <- df[df$Age >= 55, ]
+```
+
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+# Take the log of the dataset
+```{r}
+df[, useMarkers] <- log(abs(df[, useMarkers]) + 1) 
+
+preProcValues <- preProcess(df[, useMarkers], method = c("range"))
+
+df[, useMarkers] <- predict(preProcValues, df[, useMarkers])
+```
+
+# Normalise the data using the autoencoder
+## get the reference sample
+```{r}
+res_ind <- ComputeReferenceSample(df, useMarkers)
+```
+## Use reference sample to normalise the data
+```{r}
+train_dat <- df[which(df$sample_id == res_ind$refSampleInd), useMarkers]
+encoding_dim <- FuseSOM::computeGridSize(train_dat)
+
+model <- autoEncoderModel(train_dat = train_dat, input_size = length(useMarkers), 
+                           encoding_dim = encoding_dim*2, l1_reg = 5E-04)
+```
+
+```{r}
+df_norm <- predict(model$autoencoder_model, as.matrix(df[, useMarkers])) %>%
+  as.data.frame()
+colnames(df_norm) <- useMarkers
+```
+
+## create sce object for training data
+```{r}
+sce_norm <- SingleCellExperiment(assays = list(raw = t(df[, useMarkers]),
+                                               norm = t(df_norm[, useMarkers])
+),
+colData = df[, 1:10])
+
+```
+
+
+## Use FuseSOM to cluster the normalised data
+```{r}
+# run FuseSOM clustering
+nclust = 30
+sce_norm <- runFuseSOM(sce_norm, numClusters = nclust, assay = 'norm',
+                       verbose = FALSE)
+```
+## Look at heatmap
+```{r}
+scater::plotGroupedHeatmap(sce_norm, 
+                           features = useMarkers, 
+                           group = "clusters", 
+                           block = "clusters",
+                           exprs_values = "raw",
+                           center = TRUE, 
+                           scale = TRUE, 
+                           zlim = c(-3,3),
+                           cluster_rows = FALSE)
+```
+
+```{r}
+set.seed(1994)
+sample_pts <- sample(nrow(df_norm), 100000)
+sce_norm_sub <- sce_norm[, sample_pts]
+
+sce_norm_sub <- scater::runUMAP(sce_norm_sub,
+                         subset_row = useMarkers,
+                         exprs_values = "raw",
+                         BPPARAM = BPPARAM,
+                         n_threads = 7,
+                         metric = 'euclidean',
+                         verbose = T)
+
+df_raw_umap <- reducedDim(sce_norm_sub, 'UMAP') %>%
+    as.data.frame()
+colnames(df_raw_umap) <- c('UMAP 1', 'UMAP 2')
+
+df_raw_umap$Batch <- sce_norm_sub$CyTOF.Batch
+```
+
+
+```{r}
+sce_norm_sub <- scater::runUMAP(sce_norm_sub,
+                         subset_row = useMarkers,
+                         exprs_values = "norm",
+                         BPPARAM = BPPARAM,
+                         n_threads = 7,
+                         metric = 'euclidean',
+                         verbose = T)
+
+df_norm_umap <- reducedDim(sce_norm_sub, 'UMAP') %>%
+    as.data.frame()
+colnames(df_norm_umap) <- c('UMAP 1', 'UMAP 2')
+
+df_norm_umap$Batch <- sce_norm_sub$CyTOF.Batch
+```
+
+
+
+## Get a umap plot of the data
+```{r, eval=TRUE}
+p.raw.umap <- df_raw_umap %>% ggplot(aes(`UMAP 1`, `UMAP 2`)) +
+    geom_point(aes(color = `Batch`), size = 1) + 
+    ggtitle('Umap plot of unnormalised cells') +
+  theme_bw() +
+    theme(axis.text.x = element_text(size = 12),
+        plot.title = element_text(size = 15, hjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)
+        ) + scale_color_d3(palette = 'category20')
+```
+
+```{r}
+p.norm.umap <- df_norm_umap %>% ggplot(aes(`UMAP 1`, `UMAP 2`)) +
+    geom_point(aes(color = `Batch`), size = 1) + 
+    ggtitle('Umap plot of normalised cells') +
+  theme_bw() +
+    theme(axis.text.x = element_text(size = 12),
+        plot.title = element_text(size = 15, hjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)
+        ) + scale_color_d3(palette = 'category20')
+```
+
+```{r}
+cowplot::plot_grid(p.raw.umap, p.norm.umap)
+```
+
+
+```{r}
+# do prediction
+data <- getProp(sce_norm,
+                feature = "clusters", imageID = "sample_id", logit = F)
+
+
+data <- 2*asin(sqrt(data))
+# 
+# data_2 <- getProp(sce_norm,
+#                   feature = "clusters", imageID = "sample_id", logit = T)
+# data <- cbind(data, data_2)
+# colnames(data) <- janitor::make_clean_names(colnames(data))
+
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Gender, Age) %>%
+  distinct()
+clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+
+row_names <- rownames(data)
+
+Age <- clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Age"]
+GenderM <- clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      c("GenderM")]
+
+clinicaldata_info <- cbind(Age, GenderM)
+
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Gensini_bin"])
+
+
+data_logit <- getProp(sce_norm,
+                feature = "clusters", imageID = "sample_id", logit = T)
+
+colnames(data_logit) <- paste0(colnames(data_logit), "_logit")
+colnames(data) <- paste0(colnames(data), "_prop")
+```
+
+```{r}
+t <- df_norm[, useMarkers]
+t$sample_id <- df$sample_id
+
+data_mean <- t %>% 
+  group_by(sample_id) %>%
+  summarise_at(vars(useMarkers), mean) %>%
+  dplyr::select(-sample_id) %>%
+  as.data.frame()
+rownames(data_mean) <- rownames(data)
+
+```
+
+```{r}
+res.cv <- KFoldCustomEnsemble(dat_prop = data, dat_logit = data_logit, 
+                              dat_mean = data_mean, 
+                              train_y = condition,alpha = 0.2,
+                              nRepeats = 10, k = 10)
+```
+
+```{r}
+aucs <- data.frame(DeepLasso = res.cv$cv_res)
+write.csv(aucs, file = '../auc_data/deeplasso_study_3_auc.csv', row.names = F)
+```

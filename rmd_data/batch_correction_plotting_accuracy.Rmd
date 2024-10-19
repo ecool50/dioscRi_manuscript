@@ -1,0 +1,420 @@
+---
+title: "Plot batch correction accuracy"
+author: "Elijah WIllie"
+date: "2024-05-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = TRUE) 
+knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(ggsci)
+  library(data.table)
+  library(zoo)
+  library(reshape2)
+})
+```
+
+# Balanced Accuracy and F1 score
+## Read in the F1 and balanced accuracy data
+```{r}
+# deep learning
+acc_dl <- read.csv('../concordance_data/deep_learning_batch_3_pred_acc.csv')
+acc_dl$Method <- rep("Deep Learning", nrow(acc_dl))
+colnames(acc_dl)[[1]] <- 'Celltype'
+# cyCombine
+acc_cyCombine <- read.csv('../concordance_data/cyCombine_batch_3_pred_acc.csv')
+acc_cyCombine$Method <- rep("cyCombine", nrow(acc_cyCombine))
+# scMerge2
+acc_scMerge2 <- read.csv('../concordance_data/scMerge2_batch_3_pred_acc.csv')
+acc_scMerge2$Method <- rep("scMerge2", nrow(acc_scMerge2))
+# iMUBAC
+acc_imubac <- read.csv('../concordance_data/iMUBAC_batch_3_pred_acc.csv')
+acc_imubac$Method <- rep("iMUBAC", nrow(acc_imubac))
+```
+
+```{r}
+acc_all <- rbind(acc_dl, acc_cyCombine,
+                 acc_scMerge2, acc_imubac) %>%
+  dplyr::mutate(BA = `balanced.accuracy`) %>%
+  dplyr::select(-`balanced.accuracy`) %>%
+  melt() %>%
+  group_by(Method)
+```
+# Plot accuracy data
+## F1 score
+```{r, fig.width=12, fig.height=8}
+p.fba <- ggplot(acc_all, aes(x = Method, y = value)) +
+    geom_point(aes(shape = variable), size = 5) +
+    facet_wrap(~Celltype, scales = 'free_y') +
+    labs(title = "",
+         x = "Method",
+         y = "Score") +
+    theme_minimal() + 
+    theme_bw() +
+    theme(axis.text.x = element_text(size = 20,
+                                     angle = 90, vjust = 0.5, hjust=1),
+          plot.title = element_text(size = 20, hjust = 0.5, face = 'bold'),
+          axis.text.y = element_text(size = 20),
+          axis.title.y = element_text(size = 20),
+          axis.title.x = element_text(size = 20),
+          legend.text = element_text(size = 20),
+          legend.title = element_text(size = 20)
+    ) + scale_color_d3(palette = 'category20') + 
+    scale_color_jama() + 
+  guides(shape=guide_legend(title="Type"))
+```
+
+# Plot ARI and Average F1 score
+```{r}
+dat <- data.frame(Method = c("Deep Learning", "cyCombine", "iMUBAC", "scMerge2"),
+                  ARI = c(0.87, 0.84, 0.84, 0.85),
+                  NMI = c(0.84, 0.80, 0.80, 0.81)) %>% 
+  melt()
+  
+
+# temp <- merge(dat, acc_all_f1)
+```
+
+```{r, fig.width=6, fig.height=4}
+ggplot(dat, aes(x = Method, y = value, fill = variable)) +
+    geom_bar(position="dodge", stat="identity") +
+    # facet_wrap(~variable, scales = 'free_y') +
+    labs(title = "ARI and NMI for cell type classification",
+         x = "Method",
+         y = "Score") +
+    theme_minimal() + 
+    theme_bw() +
+    theme(axis.text.x = element_text(size = 15,
+                                     angle = 90, vjust = 0.5, hjust=1),
+          plot.title = element_text(size = 15, hjust = 0.5, face = 'bold'),
+          axis.text.y = element_text(size = 15),
+          axis.title.y = element_text(size = 15),
+          axis.title.x = element_text(size = 15),
+          legend.text = element_text(size = 15),
+          legend.title = element_text(size = 15)
+    ) + scale_color_d3(palette = 'category20') + 
+    scale_fill_jama() +
+   guides(fill=guide_legend(title="Type"))
+```
+
+# Plot ARI and NMI for study 3 and 4 combined
+```{r}
+dat_study_combined <- data.frame(Method = c("Deep Learning", "cyCombine", "iMUBAC", "scMerge2"),
+                  ARI = c(0.82, 0.83, 0.81, 0.82),
+                  NMI = c(0.77, 0.77, 0.78, 0.79)) %>%
+  melt()
+```
+
+```{r,  fig.width=6, fig.height=4}
+# pdf(file = "../Plots/Manuscript_Plots/all_methods_celltype_prediction_study_4.pdf",   # The directory you want to save the file in
+#     width = 8, # The width of the plot in inches
+#     height = 6) # The height of the plot in inches
+
+p.clust <- ggplot(dat_study_combined, aes(x = Method, y = value, fill = variable)) +
+  geom_bar(position="dodge", stat="identity") + 
+  # facet_grid(~variable, scales = "free_y") +
+  labs(title = "",
+       x = "Method",
+       y = "Score") +
+  theme_minimal() + 
+  theme_bw() +
+    theme(axis.text.x = element_text(size = 20,
+                                     angle = 90, vjust = 0.5, hjust=1),
+          plot.title = element_text(size = 20, hjust = 0.5, face = 'bold'),
+          axis.text.y = element_text(size = 20),
+          axis.title.y = element_text(size = 20),
+          axis.title.x = element_text(size = 20),
+          legend.text = element_text(size = 20),
+          legend.title = element_text(size = 20)
+    ) + scale_color_d3(palette = 'category20') + 
+    scale_fill_jama() +
+  guides(fill=guide_legend(title="Metric"))
+# 
+# dev.off()
+```
+
+```{r fig.width=16, fig.height=8}
+pdf(file = "../Plots/Manuscript_Plots/Figure_2.pdf",   # The directory you want to save the file in
+    width = 16, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+
+cowplot::plot_grid(p.fba, p.clust, labels = LETTERS[1:2], rel_widths = c(3/5, 2/5))
+
+dev.off()
+```
+
+
+# merge the datasets
+```{r}
+# get the F1 data
+acc_all_f1 <- rbind(acc_dl, acc_cyCombine,
+                 acc_scMerge2, acc_imubac) %>%
+  melt() %>%
+  filter(variable == "F1") %>%
+  group_by(Method)
+
+# %>% 
+#   summarise_at(.vars = 'value', .funs = mean)
+
+acc_all_ba <- rbind(acc_dl, acc_cyCombine,
+                 acc_scMerge2, acc_imubac) %>%
+  melt() %>%
+  filter(variable == "balanced.accuracy")
+```
+
+## Balanced Accuracy
+```{r}
+p.ba <- ggplot(acc_all_ba, aes(x = Celltype, y = value, fill = Method)) +
+    geom_bar(stat = "identity", position = position_dodge()) +
+    labs(title = "All methods balanced accuracy per class",
+         x = "Cell Type",
+         y = "Balanced Accuracy") +
+    theme_minimal() + 
+    theme_bw() +
+    theme(axis.text.x = element_text(size = 16,
+                                     angle = 90, vjust = 0.5, hjust=1),
+          plot.title = element_text(size = 20, hjust = 0.5),
+          axis.text.y = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          axis.title.x = element_text(size = 16),
+          legend.text = element_text(size = 16),
+          legend.title = element_text(size = 16)
+    ) + scale_color_d3(palette = 'category20') + 
+    scale_fill_startrek()
+```
+
+# Proportion plotting
+## Read in the data
+```{r}
+# deep learning
+dl_dat <- read.csv('../concordance_data/deep_learning_batch_3_pred_data.csv')
+dl_dat$Method <- rep("Deep Learning", nrow(dl_dat))
+# cyCombine
+cyCombine_dat <- read.csv('../concordance_data/cyCombine_batch_3_pred_data.csv')
+cyCombine_dat$Method <- rep("cyCombine", nrow(cyCombine_dat))
+# scMerge2
+scMerge2_dat <- read.csv('../concordance_data/scMerge2_batch_3_pred_data.csv')
+scMerge2_dat$Method <- rep("scMerge2", nrow(scMerge2_dat))
+# iMUBAC
+imubac_dat <- read.csv('../concordance_data/iMUBAC_batch_3_pred_data.csv')
+imubac_dat$Method <- rep("iMUBAC", nrow(imubac_dat))
+```
+ 
+ 
+## Combine the data
+```{r}
+dat_all <- rbind(dl_dat, cyCombine_dat,
+                 scMerge2_dat, imubac_dat)
+```
+## Generate proportion plot
+```{r}
+p.prop <- ggplot(dat_all, aes(x = Truth, y = Proportion, fill = Predicted)) +
+  geom_bar(stat = "identity") + 
+  facet_wrap(~Method, scales = "free_y") +
+  labs(title = "Class Support and Prediction Proportions",
+       x = "Cell Type",
+       y = "Proportion of Total Support",
+       fill = "Predicted") +
+  theme_minimal() + 
+  theme_bw() +
+    theme(axis.text.x = element_text(size = 20,
+                                     angle = 90, vjust = 0.5, hjust=1),
+        plot.title = element_text(size = 20, hjust = 0.5),
+        axis.text.y = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.title.x = element_text(size = 20),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        legend.position = 'top',
+        strip.text.x = element_text(size = 20, colour = "black")
+        ) + scale_color_d3(palette = 'category20') + 
+  scale_fill_aaas()
+```
+
+
+
+
+
+
+```{r}
+p <- ggplot(dat, aes(x = Method, y = ARI)) +
+  # facet_grid(~variable, scales = "free_y") +
+   geom_bar(stat = "identity") + 
+  labs(title = "Cell Type Prediction Performance",
+       y = "ARI",
+       x = "Method") +
+  theme_bw() +
+    theme(axis.text.x = element_text(size = 20,
+                                     angle = 90, vjust = 0.5, hjust=1),
+        plot.title = element_text(size = 20, hjust = 0.5),
+        axis.text.y = element_text(size = 20),
+        axis.title.y = element_text(size = 20),
+        axis.title.x = element_text(size = 20),
+        legend.text = element_text(size = 20),
+        legend.title = element_text(size = 20),
+        legend.position = 'top',
+        ) + scale_color_d3(palette = 'category20') + 
+  scale_fill_jama()
+```
+
+
+# Combine all the plots
+```{r, fig.width=18, fig.height=8}
+# pdf(file = "../Plots/Manuscript_Plots/all_methods_mg_celltype_prediction.pdf",   # The directory you want to save the file in
+#     width = 16, # The width of the plot in inches
+#     height = 8) # The height of the plot in inches
+
+# Generate AUC plot
+
+cowplot::plot_grid(p.prop, p,
+                   labels = c("A", "B"))
+# 
+# dev.off()
+```
+
+
+
+# Plot AUC graphs for full model and MG models
+```{r}
+mg_aucs <- read.csv('../auc_data/mg_glasso_auc_study_3.csv')
+fs_aucs <- read.csv('../auc_data/fs_glasso_auc_study_3.csv')
+# mg_aucs_base <- read.csv('../auc_data/mg_model_baseline_auc_study_3.csv')
+# fs_aucs_base <- read.csv('../auc_data/full_model_auc_baseline_study_3.csv')
+```
+
+```{r}
+pred_list <- list(fs_aucs$preds, mg_aucs$pred_study_3)
+label_list <- list(fs_aucs$truth, fs_aucs$truth)
+
+
+manypred <- prediction(pred_list, label_list)
+
+perf <- ROCR::performance(manypred, "tpr", "fpr")
+auc_perf <- ROCR::performance(manypred, "auc")
+
+
+plt_dat = data.frame(
+    FPR = unlist(perf@x.values),
+    TPR = unlist(perf@y.values)
+)
+
+auc <- auc_perf@y.values
+
+plt_dat$Data <- as.factor(rep(c('FuseSOM', 'MG'), 
+                              times = c(nrow(fs_aucs) + 1,
+                              nrow(mg_aucs) + 1)))
+
+# pdf(file = "../Plots/Manuscript_Plots/study_3_gensini_aucs.pdf",   # The directory you want to save the file in
+#     width = 8, # The width of the plot in inches
+#     height = 6) # The height of the plot in inches
+
+p.deep <- ggplot(plt_dat, aes(x = FPR, y = TPR)) +
+    geom_line(aes(colour = Data)) +
+    labs(x = perf@x.name, y = perf@y.name) +
+    geom_abline(slope = 1, intercept = 0) + 
+  ggtitle("Group Lasso", 
+          subtitle = paste("FuseSOM =", round(auc[[1]], digits = 2), ',',
+                "MG =", round(auc[[2]], digits = 2))) +
+  theme_bw() +
+  theme(plot.title = element_text(color="Black", size=20, face="bold", hjust = 0.5),
+      plot.subtitle = element_text(color = "red", size = 20, hjust = 0.5),
+      axis.title.x = element_text(color="Black", size=20),
+      axis.title.y = element_text(color="Black", size=20),
+      axis.text.y = element_text(size = 20),
+      axis.text.x = element_text(size = 20),
+      strip.text.x = element_text(size = 20),
+      legend.title = element_text(size=20), #change legend title font size
+      legend.text = element_text(size=20), #change legend text font size))
+      legend.position = 'top'
+  )
+
+# dev.off()
+```
+
+```{r}
+pred_list_base <- list(fs_aucs_base$lambda.min, mg_aucs_base$lambda.min)
+label_list_base <- list(fs_aucs$truth, fs_aucs$truth)
+
+
+manypred_base <- prediction(pred_list_base, label_list_base)
+
+perf_base <- ROCR::performance(manypred_base, "tpr", "fpr")
+auc_perf_base <- ROCR::performance(manypred_base, "auc")
+
+
+plt_dat_base = data.frame(
+    FPR = unlist(perf_base@x.values),
+    TPR = unlist(perf_base@y.values)
+)
+
+auc_base <- auc_perf_base@y.values
+
+plt_dat_base$Data <- as.factor(rep(c('FuseSOM', 'MG'), 
+                              times = c(nrow(fs_aucs_base) + 1,
+                              nrow(mg_aucs_base) + 1)))
+
+# pdf(file = "../Plots/Manuscript_Plots/study_3_gensini_base_aucs.pdf",   # The directory you want to save the file in
+#     width = 8, # The width of the plot in inches
+#     height = 6) # The height of the plot in inches
+
+ggplot(plt_dat_base, aes(x = FPR, y = TPR)) +
+    geom_line(aes(colour = Data)) +
+    labs(x = perf_base@x.name, y = perf_base@y.name) +
+    geom_abline(slope = 1, intercept = 0) + 
+  ggtitle("Lasso", 
+          subtitle = paste("FuseSOM =", round(auc_base[[1]], digits = 2), ',',
+                "MG =", round(auc_base[[2]], digits = 2))) +
+  theme_bw() +
+  theme(plot.title = element_text(color="Black", size=20, face="bold", hjust = 0.5),
+      plot.subtitle = element_text(color = "red", size = 20, hjust = 0.5),
+      axis.title.x = element_text(color="Black", size=20),
+      axis.title.y = element_text(color="Black", size=20),
+      axis.text.y = element_text(size = 20),
+      axis.text.x = element_text(size = 20),
+      strip.text.x = element_text(size = 20),
+      legend.title = element_text(size=20), #change legend title font size
+      legend.text = element_text(size=20), #change legend text font size))
+      legend.position = 'top'
+  )
+
+# dev.off()
+```
+
+# Plot ARI and 1 - ARI for clustering
+```{r}
+dat_ari <- data.frame(Method = c("Deep Learning", "cyCombine", "iMUBAC", "scMerge2", "Raw"),
+                  ARI = c(0.74, 0.74, 0.71, 0.65, 0.74),
+                  ARI_Batch = c(0.98, 0.99, 0.97, 1, 1))
+```
+
+```{r}
+library(ggrepel)
+p.batch <- ggplot(dat_ari, aes(y = ARI, x = ARI_Batch, color = Method)) +
+  geom_point(size = 5) + 
+  labs(title = "Clustering",
+       y = "ARI (cell type)",
+       x = "1 - ARI (batch)") +
+  geom_label_repel(aes(label = Method),
+                  box.padding   = 0.35, 
+                  point.padding = 0.5,
+                  segment.color = 'grey50') +
+  theme_bw() +
+    theme(axis.text.x = element_text(size = 16),
+        plot.title = element_text(size = 20, hjust = 0.5),
+        axis.text.y = element_text(size = 16),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_text(size = 16),
+        legend.position = "none"
+        ) + scale_color_d3(palette = 'category20') + 
+  scale_color_startrek()
+```
+

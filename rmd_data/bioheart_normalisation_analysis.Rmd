@@ -1,0 +1,689 @@
+---
+title: "BioHEART-CT Normalisation Analysis"
+author: "Elijah WIllie"
+date: "2024-08-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpregOverlap)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/customCV.R')
+# set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3',  'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+# Load normalised data
+```{r}
+load('../sce_dat/study_4_MG_MMD_VAE_sce.RData')
+load('../sce_dat/study_3_MG_MMD_VAE_sce.RData')
+```
+
+# Look at study 4
+```{r}
+df_raw <- assay(sce_norm, "raw") %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::mutate(sample_id = sce_norm$sample_id) %>%
+  # dplyr::mutate(CellType = sce_norm$mg_cell_type_distinct) %>%
+  dplyr::mutate(Gensini = sce_norm$gensini_bin) %>%
+  dplyr::mutate(Batch = sce_norm$CyTOF.Batch)
+
+df_norm <- assay(sce_norm, "norm") %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::mutate(sample_id = sce_norm$sample_id) %>%
+  # dplyr::mutate(CellType = sce_norm$mg_cell_type_distinct) %>%
+  dplyr::mutate(Gensini = sce_norm$gensini_bin) %>%
+  dplyr::mutate(Batch = sce_norm$CyTOF.Batch)
+
+markers <- c('CD4', 'CD20', 'CD3', 'CD8a')
+```
+
+## Before normalisation
+### Density per sample
+```{r}
+p.den.raw <- df_raw %>%
+  dplyr::select(c(markers, sample_id)) %>%
+  melt(id.var = c('sample_id', 'gensini_bin')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  ggplot(aes(x = value, color = sample_id)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  labs(title = "Density Plots of Raw Marker Intensities", x = "Intensity", y = "Density")
+```
+### Density per outcome
+```{r}
+p.den.raw.gen <- df_raw %>%
+  dplyr::select(c(markers, sample_id, Gensini)) %>%
+  melt(id.var = c('sample_id', 'Gensini')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  ggplot(aes(x = value, color = Gensini)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Raw Marker Intensities", x = "Intensity", y = "Density")
+```
+
+### Density per batch
+```{r}
+p.den.raw.batch <- df_raw %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  dplyr::mutate(Batch = as.factor(Batch)) %>%
+  ggplot(aes(x = value, color = Batch)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Raw Marker Intensities", x = "Intensity", y = "Density")
+```
+### PCA
+```{r}
+df_raw_summary <- df_raw %>%
+  dplyr::select(c(useMarkers, sample_id, Batch)) %>%
+  dplyr::group_by(sample_id, Batch) %>%
+  dplyr::summarise(across(everything(), mean))
+
+# Remove sample_labels to keep only the summarized data for PCA
+df_raw_summary_data <- df_raw_summary %>% 
+  dplyr::select(-sample_id) %>%
+  dplyr::select(-Batch)
+
+# Perform PCA
+pca <- prcomp(df_raw_summary_data, scale. = TRUE, center = T)
+
+# Create a data frame for plotting
+pca_data <- as.data.frame(pca$x)
+pca_data$Sample <- as.factor(df_raw_summary$sample_id) # Adding sample labels back
+pca_data$Batch <- as.factor(df_raw_summary$Batch) # Adding sample labels back
+
+# Plot the first two principal components
+p.pca.raw <- ggplot(pca_data, aes(x = PC1, y = PC2, color = Batch)) +
+  geom_point(size = 5) +
+  theme_minimal() +
+  labs(title = "PCA of raw samples", x = "PC1", y = "PC2") +
+  scale_color_startrek()
+
+```
+
+### PCA Cell level
+```{r}
+# Perform PCA
+pca <- prcomp(df_raw[, useMarkers], scale. = TRUE)
+
+# Create a data frame for plotting
+pca_data <- as.data.frame(pca$x)
+pca_data$Batch <- df_raw$Batch # Assuming batch_labels contains batch info
+
+# Plot the first two principal components
+p.pca.raw <- ggplot(pca_data, aes(x = PC1, y = PC2, color = Batch)) +
+  scattermore::geom_scattermore(size = 3) +
+  theme_minimal() + 
+labs(title = "PCA of raw samples", x = "PC1", y = "PC2") +
+  scale_color_startrek()
+```
+
+
+## After normalisation
+### Density per sample
+```{r}
+p.den.norm <- df_norm %>%
+  select(c(markers, sample_id)) %>%
+  melt(id.var = c('sample_id', 'gensini_bin')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  ggplot(aes(x = value, color = sample_id)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  labs(title = "Density Plots of Normlaised Marker Intensities", x = "Intensity", y = "Density")
+```
+
+### Density per outcome
+```{r}
+p.den.norm.gen <- df_norm %>%
+  dplyr::select(c(markers, sample_id, Gensini)) %>%
+  melt(id.var = c('sample_id', 'Gensini')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  ggplot(aes(x = value, color = Gensini)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Normalised Marker Intensities", x = "Intensity", y = "Density")
+```
+
+### Density per batch
+```{r}
+p.den.norm.batch <- df_norm %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  dplyr::mutate(Batch = as.factor(Batch)) %>%
+  ggplot(aes(x = value, color = Batch)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Normalised Marker Intensities", x = "Intensity", y = "Density")
+```
+### PCA sample level
+```{r}
+df_norm_summary <- df_norm %>%
+  dplyr::select(c(useMarkers, sample_id, Batch)) %>%
+  dplyr::group_by(sample_id, Batch) %>%
+  dplyr::summarise(across(everything(), mean))
+
+# Remove sample_labels to keep only the summarized data for PCA
+df_norm_summary_data <- df_norm_summary %>% 
+  dplyr::select(-sample_id) %>%
+  dplyr::select(-Batch)
+
+# Perform PCA
+pca_norm <- prcomp(df_norm_summary_data, scale. = TRUE, center = TRUE)
+
+# Create a data frame for plotting
+pca_data_norm <- as.data.frame(pca_norm$x)
+pca_data_norm$Sample <- as.factor(df_norm_summary$sample_id) # Adding sample labels back
+pca_data_norm$Batch <- as.factor(df_norm_summary$Batch) # Adding sample labels back
+
+# Plot the first two principal components
+p.pca.norm <- ggplot(pca_data_norm, aes(x = PC1, y = PC2, color = Batch)) +
+  geom_point(size = 5) +
+  theme_minimal() +
+  labs(title = "PCA of normalised samples", x = "PC1", y = "PC2") +
+  scale_color_startrek()
+
+```
+
+### PCA cell level
+```{r}
+pca.norm <- prcomp(df_norm[, useMarkers], scale. = TRUE)
+
+# Create a data frame for plotting
+pca_data_norm <- as.data.frame(pca.norm$x)
+pca_data_norm$Batch <- df_norm$Batch # Assuming batch_labels contains batch info
+
+# Plot the first two principal components
+p.pca.norm <- ggplot(pca_data_norm, aes(x = PC1, y = PC2, color = Batch)) +
+  scattermore::geom_scattermore(size = 3) +
+  theme_minimal() + 
+labs(title = "PCA of normalised samples", x = "PC1", y = "PC2") +
+  scale_color_startrek()
+```
+
+
+# Now repeat the same for study 3
+```{r}
+df_3_raw <- assay(sce_3_norm, "raw") %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::mutate(sample_id = sce_3_norm$sample_id) %>%
+  dplyr::mutate(CellType = sce_3_norm$mg_cell_type_distinct) %>%
+  dplyr::mutate(Gensini = sce_3_norm$Gensini_bin) %>%
+  dplyr::mutate(Batch = sce_3_norm$Batch)
+
+df_3_norm <- assay(sce_3_norm, "norm") %>%
+  t() %>%
+  as.data.frame() %>%
+  dplyr::mutate(sample_id = sce_3_norm$sample_id) %>%
+  dplyr::mutate(CellType = sce_3_norm$mg_cell_type_distinct) %>%
+  dplyr::mutate(Gensini = sce_3_norm$Gensini_bin) %>%
+  dplyr::mutate(Batch = sce_3_norm$Batch)
+```
+
+
+## Before normalisation
+### Density per sample
+```{r}
+p.den.raw.3 <- df_3_raw %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  ggplot(aes(x = value, color = sample_id)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  labs(title = "Density Plots of Raw Marker Intensities Study 3", x = "Intensity", y = "Density")
+```
+### Density per outcome
+```{r}
+p.den.raw.gen.3 <- df_3_raw %>%
+  dplyr::select(c(markers, sample_id, Gensini)) %>%
+  melt(id.var = c('sample_id', 'Gensini')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  ggplot(aes(x = value, color = Gensini)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Raw Marker Intensities Study 3", x = "Intensity", y = "Density")
+```
+
+### Density per batch
+```{r}
+p.den.raw.batch.3 <- df_3_raw %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  dplyr::mutate(Batch = as.factor(Batch)) %>%
+  ggplot(aes(x = value, color = Batch)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Raw Marker Intensities Study 3", x = "Intensity", y = "Density")
+```
+### PCA
+```{r}
+df_3_raw_summary <- df_3_raw %>%
+  dplyr::select(c(useMarkers, sample_id, Batch)) %>%
+  dplyr::group_by(sample_id, Batch) %>%
+  dplyr::summarise(across(everything(), mean))
+
+# Remove sample_labels to keep only the summarized data for PCA
+df_3_raw_summary_data <- df_3_raw_summary %>% 
+  dplyr::select(-sample_id) %>%
+  dplyr::select(-Batch)
+
+# Perform PCA
+pca_3 <- prcomp(df_3_raw_summary_data, scale. = TRUE, center = T)
+
+# Create a data frame for plotting
+pca_data_3 <- as.data.frame(pca_3$x)
+pca_data_3$Sample <- as.factor(df_3_raw_summary$sample_id) # Adding sample labels back
+pca_data_3$Batch <- as.factor(df_3_raw_summary$Batch) # Adding sample labels back
+
+# Plot the first two principal components
+p.pca.raw.3 <- ggplot(pca_data_3, aes(x = PC1, y = PC2, color = Batch)) +
+  geom_point(size = 5) +
+  theme_minimal() +
+  labs(title = "PCA of raw samples raw", x = "PC1", y = "PC2") +
+  scale_color_startrek()
+
+```
+
+### PCA Cell level
+```{r}
+# Perform PCA
+pca_3 <- prcomp(df_3_raw[, useMarkers], scale. = TRUE)
+
+# Create a data frame for plotting
+pca_data_3 <- as.data.frame(pca_3$x)
+pca_data_3$Batch <- df_3_raw$Batch # Assuming batch_labels contains batch info
+
+# Plot the first two principal components
+p.pca.raw.3 <- ggplot(pca_data_3, aes(x = PC1, y = PC2, color = Batch)) +
+  scattermore::geom_scattermore(size = 3) +
+  theme_minimal() + 
+labs(title = "PCA of raw samples Study 3", x = "PC1", y = "PC2") +
+  scale_color_startrek()
+```
+
+## After normalisation
+### Density per sample
+```{r}
+p.den.norm.3 <- df_3_norm %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  ggplot(aes(x = value, color = sample_id)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  labs(title = "Density Plots of Normlaised Marker Intensities Study 3", x = "Intensity", y = "Density")
+```
+
+### Density per outcome
+```{r}
+p.den.norm.gen.3 <- df_3_norm %>%
+  dplyr::select(c(markers, sample_id, Gensini)) %>%
+  melt(id.var = c('sample_id', 'Gensini')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  ggplot(aes(x = value, color = Gensini)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Normalised Marker Intensities Study 3", x = "Intensity", y = "Density")
+```
+
+### Density per batch
+```{r}
+p.den.norm.batch.3 <- df_3_norm %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  dplyr::mutate(Batch = as.factor(Batch)) %>%
+  ggplot(aes(x = value, color = Batch)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Normalised Marker Intensities Study 3", x = "Intensity", y = "Density")
+```
+### PCA
+```{r}
+df_3_norm_summary <- df_3_norm %>%
+  dplyr::select(c(useMarkers, sample_id, Batch)) %>%
+  dplyr::group_by(sample_id, Batch) %>%
+  dplyr::summarise(across(everything(), mean))
+
+# Remove sample_labels to keep only the summarized data for PCA
+df_3_norm_summary_data <- df_3_norm_summary %>% 
+  dplyr::select(-sample_id) %>%
+  dplyr::select(-Batch)
+
+# Perform PCA
+pca_norm_3 <- prcomp(df_3_norm_summary_data, scale. = TRUE, center = TRUE)
+
+# Create a data frame for plotting
+pca_data_norm <- as.data.frame(pca_norm_3$x)
+pca_data_norm$Sample <- as.factor(df_3_norm_summary$sample_id) # Adding sample labels back
+pca_data_norm$Batch <- as.factor(df_3_norm_summary$Batch) # Adding sample labels back
+
+# Plot the first two principal components
+p.pca.norm.3 <- ggplot(pca_data_norm, aes(x = PC1, y = PC2, color = Batch)) +
+  geom_point(size = 5) +
+  theme_minimal() +
+  labs(title = "PCA of normalised samples Study 3", x = "PC1", y = "PC2") +
+  scale_color_startrek()
+
+```
+
+### PCA Cell level
+```{r}
+# Perform PCA
+pca_3_norm <- prcomp(df_3_norm[, useMarkers], scale. = TRUE)
+
+# Create a data frame for plotting
+pca_data_3_norm <- as.data.frame(pca_3_norm$x)
+pca_data_3_norm$Batch <- df_3_raw$Batch # Assuming batch_labels contains batch info
+
+# Plot the first two principal components
+p.pca.norm.3 <- ggplot(pca_data_3_norm, aes(x = PC1, y = PC2, color = Batch)) +
+  scattermore::geom_scattermore(size = 3) +
+  theme_minimal() + 
+labs(title = "PCA of normalised samples Study 3", x = "PC1", y = "PC2") +
+  scale_color_startrek()
+```
+
+# Now lets combine both datasets
+```{r}
+df_raw_combined <- rbind(df_raw, df_3_raw) %>%
+  dplyr::mutate(Batch = if_else(Batch %like% 3, 3, 4))
+df_norm_combined <- rbind(df_norm, df_3_norm) %>%
+  dplyr::mutate(Batch = if_else(Batch %like% 3, 3, 4))
+```
+
+## Density per sample
+### Before Normalisation
+```{r}
+p.den.raw.combined <- df_raw_combined %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Batch = as.factor(Batch)) %>%
+  ggplot(aes(x = value, color = Batch)) +
+  # gghighlight(Batch %like% '3') + 
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Raw Marker Intensities Combined", x = "Intensity", y = "Density")
+```
+
+### After Normalisation
+```{r}
+p.den.norm.combined <- df_norm_combined %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  ggplot(aes(x = value, color = sample_id)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  labs(title = "Density Plots of Normalised Marker Intensities Combined", x = "Intensity", y = "Density")
+```
+
+## Density per outcome
+### Before Normalisation
+```{r}
+p.den.raw.combined.gen <- df_raw_combined %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  ggplot(aes(x = value, color = Gensini)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Raw Marker Intensities Combined", x = "Intensity", y = "Density")
+```
+
+### After Normalisation
+```{r}
+p.den.norm.combined.gen <- df_norm_combined %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  dplyr::mutate(Batch = as.factor(Batch)) %>%
+  ggplot(aes(x = value, color = Batch)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Normalised Marker Intensities Combined", x = "Intensity", y = "Density")
+```
+
+## Density per Batch
+### Before Normalisation
+```{r}
+p.den.raw.combined.batch <- df_raw_combined %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  dplyr::mutate(Batch = as.factor(Batch)) %>%
+  ggplot(aes(x = value, color = Batch)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Raw Marker Intensities Combined", x = "Intensity", y = "Density")
+```
+
+### After Normalisation
+```{r}
+p.den.norm.combined.batch <- df_norm_combined %>%
+  dplyr::select(c(markers, sample_id, Gensini, Batch)) %>%
+  melt(id.var = c('sample_id', 'Gensini', 'Batch')) %>%
+  dplyr::mutate(sample_id = as.factor(sample_id)) %>%
+  dplyr::mutate(Gensini = as.factor(Gensini)) %>%
+  dplyr::mutate(Batch = as.factor(Batch)) %>%
+  ggplot(aes(x = value, color = Batch)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  # theme(legend.position = 'none') +
+  labs(title = "Density Plots of Normalised Marker Intensities Combined", x = "Intensity", y = "Density")
+```
+
+## PCA per sample
+### Before normalisation
+```{r}
+df_raw_combined_summary <- df_raw_combined %>%
+  dplyr::select(c(useMarkers, sample_id, Batch)) %>%
+  dplyr::group_by(sample_id, Batch) %>%
+  dplyr::summarise(across(everything(), mean))
+
+# Remove sample_labels to keep only the summarized data for PCA
+df_raw_combined_summary_data <- df_raw_combined_summary %>% 
+  dplyr::select(-sample_id) %>%
+  dplyr::select(-Batch)
+
+# Perform PCA
+pca_combined <- prcomp(df_raw_combined_summary_data, scale. = TRUE, center = T)
+
+# Create a data frame for plotting
+pca_combined_data <- as.data.frame(pca_combined$x)
+pca_combined_data$Sample <- as.factor(df_raw_combined_summary$sample_id) # Adding sample labels back
+pca_combined_data$Batch <- as.factor(df_raw_combined_summary$Batch) # Adding sample labels back
+
+# Plot the first two principal components
+p.pca.raw.combined <- ggplot(pca_combined_data, aes(x = PC1, y = PC2, color = Batch)) +
+  geom_point(size = 5) +
+  theme_minimal() +
+  labs(title = "PCA of raw samples combined", x = "PC1", y = "PC2") +
+  scale_color_aaas()
+
+```
+
+### After normalisation
+```{r}
+df_norm_combined_summary <- df_norm_combined %>%
+  dplyr::select(c(useMarkers, sample_id, Batch)) %>%
+  dplyr::group_by(sample_id, Batch) %>%
+  dplyr::summarise(across(everything(), mean))
+
+# Remove sample_labels to keep only the summarized data for PCA
+df_norm_combined_summary_data <- df_norm_combined_summary %>% 
+  dplyr::select(-sample_id) %>%
+  dplyr::select(-Batch)
+
+# Perform PCA
+pca_combined_norm <- prcomp(df_norm_combined_summary_data, scale. = TRUE, center = T)
+
+# Create a data frame for plotting
+pca_combined_data_norm <- as.data.frame(pca_combined_norm$x)
+pca_combined_data_norm$Sample <- as.factor(df_norm_combined_summary$sample_id) # Adding sample labels back
+pca_combined_data_norm$Batch <- as.factor(df_norm_combined_summary$Batch) # Adding sample labels back
+
+# Plot the first two principal components
+p.pca.norm.combined <- ggplot(pca_combined_data_norm, aes(x = PC1, y = PC2, color = Batch)) +
+  geom_point(size = 5) +
+  theme_minimal() +
+  labs(title = "PCA of norm samples combined", x = "PC1", y = "PC2") +
+  scale_color_aaas()
+
+```
+
+## PCA Cell level
+### Before Normalisation
+```{r}
+# Perform PCA
+pca_combined <- prcomp(df_raw_combined[, useMarkers], scale. = TRUE)
+
+# Create a data frame for plotting
+pca_data_combined <- as.data.frame(pca_combined$x)
+pca_data_combined$Batch <- as.factor(df_raw_combined$Batch) # Assuming batch_labels contains batch info
+
+# Plot the first two principal components
+p.pca.raw.combined <- ggplot(pca_data_combined, aes(x = PC1, y = PC2, color = Batch)) +
+  scattermore::geom_scattermore(size = 3) +
+  theme_minimal() + 
+labs(title = "PCA of raw samples combined", x = "PC1", y = "PC2") +
+  scale_color_aaas()
+```
+
+### After Normalisation
+```{r}
+# Perform PCA
+pca_combined_norm <- prcomp(df_norm_combined[, useMarkers], scale. = TRUE)
+
+# Create a data frame for plotting
+pca_data_combined_norm <- as.data.frame(pca_combined_norm$x)
+pca_data_combined_norm$Batch <- as.factor(df_norm_combined$Batch) # Assuming batch_labels contains batch info
+
+# Plot the first two principal components
+p.pca.norm.combined <- ggplot(pca_data_combined_norm, aes(x = PC1, y = PC2, color = Batch)) +
+  scattermore::geom_scattermore(size = 3) +
+  theme_minimal() + 
+labs(title = "PCA of normalised samples combined", x = "PC1", y = "PC2") +
+  scale_color_aaas()
+```
+
+# Look at Frobenius norm work
+```{r}
+res_ind_raw <- ComputeReferenceSample(df_raw, markers = useMarkers, sample_col = 'sample_id')
+raw_norms <- res_ind_raw$Norms
+
+pca_raw <- prcomp(raw_norms, scale. = TRUE)
+pca_fro_dat <- as.data.frame(pca_raw$x)
+
+pca_fro_dat$Batch <- as.factor(df_raw_summary$Batch) # Assuming batch_labels contains batch info
+
+# Plot the first two principal components
+p.pca.raw.combined <- ggplot(pca_fro_dat, aes(x = PC1, y = PC2, color = Batch)) +
+  geom_point(size = 3) +
+  theme_minimal() + 
+labs(title = "PCA of raw samples combined", x = "PC1", y = "PC2") +
+  scale_color_aaas()
+```
+

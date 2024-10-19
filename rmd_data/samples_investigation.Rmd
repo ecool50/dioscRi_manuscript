@@ -1,0 +1,244 @@
+---
+title: "Bad Samples Investigation"
+author: "Elijah WIllie"
+date: "2024-07-03"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  # library(reticulate)
+  # use_virtualenv('keras_env', required=TRUE)
+  # library(keras)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(SKM)
+  library(caret)
+  library(ROCR)
+  library(cvAUC)
+  library(spicyR)
+  library(cyCombine)
+  library(ClassifyR)
+  library(cowplot)
+  library(psych)
+  library(igraph)
+  library(tensorflow)
+  library(Spectrum)
+  library(glmnet)
+  library(ipflasso)
+  library(prioritylasso)
+  library(hopach)
+  library(rpart)
+  library(rpart.plot)
+  # library(ruta)
+  library(janitor)
+  library(ggtree)
+  library(ape)
+  library(grpregOverlap)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+  library(data.tree)
+})
+
+# k = backend()     # this where the software used to break
+source('~/Documents/PhD/bioheart_analysis/scripts/autoClass.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/deep_learning_helper_funcs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/customCV.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/predClusters.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/trainClassifier.R')
+# source('~/Documents/PhD/DeepLearning_CyTOF/robust_ae.R')
+set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+# Load normalised data
+```{r}
+# load('../sce_dat/study_4_autoEncoder_sce.RData')
+load('../sce_dat/study_3_autoEncoder_sce.RData')
+```
+
+
+# Train clustering model with scCLassify
+## Select training data 
+```{r}
+bad_samples <- c(222L, 313L, 349L, 387L, 505L, 667L, 725L, 794L, 874L)
+
+set.seed(1994)
+df_3_norm <- colData(sce_3_norm) %>%
+  as.data.frame() %>%
+   cbind(data.frame(t(assay(sce_3_norm, "norm")))) %>%
+  dplyr::mutate(the9 = if_else(sample_id %in% bad_samples, "Yes", "No"))
+df_3_norm$sample_id <- factor(df_3_norm$sample_id)
+
+df_3_raw <- colData(sce_3_norm) %>%
+  as.data.frame() %>%
+   cbind(data.frame(t(assay(sce_3_norm, "raw")))) %>%
+  dplyr::mutate(the9 = if_else(sample_id %in% bad_samples, "Yes", "No"))
+df_3_raw$sample_id <- factor(df_3_raw$sample_id)
+```
+
+
+```{r}
+df_norm_sub <- df_3_norm %>%
+  dplyr::filter(sample_id %in% bad_samples)
+
+df_sub <- df_3_raw %>%
+  dplyr::filter(sample_id %in% bad_samples)
+```
+
+
+```{r, eval=FALSE}
+df_3_norm %>% 
+  group_by(sample_id, the9) %>%
+  dplyr::select(the9, useMarkers) %>%
+  summarise(across(useMarkers, ~mean(.))) %>%
+  # dplyr::select(-sample_id) %>%
+  as.data.frame() %>%
+  melt(id.vars = c('sample_id', 'the9')) %>%
+  ggplot(aes(x = sample_id, y = value, colour = the9)) +
+  geom_boxplot() +
+  # gghighlight(sample_id %in% bad_samples) + 
+  # coord_flip() +
+  # facet_wrap(~sample_id, scales = "free_x") + 
+  labs(title = "") +
+    theme_minimal() + 
+    theme_bw() +
+    theme(axis.text.x = element_text(size = 16,
+                                     angle = 90, vjust = 0.5, hjust=1),
+          plot.title = element_text(size = 20, hjust = 0.5),
+          axis.text.y = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          axis.title.x = element_text(size = 16),
+          legend.text = element_text(size = 16),
+          legend.title = element_text(size = 16)
+          # legend.position = 'None'
+    )
+```
+
+# Do PCA on the samples
+```{r}
+rownames(df_3_raw) <- df_3_raw$sample_id
+
+```
+
+```{r}
+df_3_raw %>% 
+  group_by(sample_id) %>%
+  dplyr::select(useMarkers) %>%
+  summarise(across(useMarkers, ~mean(.))) %>%
+  # dplyr::select(-sample_id) %>%
+  as.data.frame() %>%
+  melt(id.vars = 'sample_id') %>%
+  ggplot(aes(x = value)) +
+  geom_boxplot(aes(color = sample_id)) +
+  gghighlight(sample_id %in% bad_samples) +
+  coord_flip() +
+  # facet_wrap(~sample_id, scales = "free_x") + 
+  labs(title = "") +
+    theme_minimal() + 
+    theme_bw() +
+    theme(axis.text.x = element_text(size = 16,
+                                     angle = 90, vjust = 0.5, hjust=1),
+          plot.title = element_text(size = 20, hjust = 0.5),
+          axis.text.y = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          axis.title.x = element_text(size = 16),
+          legend.text = element_text(size = 16),
+          legend.title = element_text(size = 16)
+          # legend.position = 'None'
+    )
+```
+```{r}
+df_3_raw_mean <- df_3_raw %>% 
+  group_by(sample_id, Gensini_bin) %>%
+  dplyr::select(useMarkers) %>%
+  summarise(across(useMarkers, ~mean(.)))
+
+rownames(df_3_raw_mean) <- df_3_raw_mean$sample_id
+
+
+df_3_norm_mean <- df_3_norm %>% 
+  group_by(sample_id, Gensini_bin) %>%
+  dplyr::select(useMarkers) %>%
+  summarise(across(useMarkers, ~mean(.)))
+
+rownames(df_3_raw_mean) <- df_3_raw_mean$sample_id
+```
+```{r}
+PC <- prcomp(df_3_raw_mean[, useMarkers])
+
+PC_norm <- prcomp(df_3_norm_mean[, useMarkers])
+```
+
+```{r}
+pc_dat <- data.frame(PC1 = PC$x[, 1], PC2 = PC$x[, 2], sample_id = df_3_raw_mean$sample_id, 
+                     Gensini_bin = factor(df_3_raw_mean$Gensini_bin)) %>%
+  dplyr::mutate(the9 = if_else(sample_id %in% bad_samples, "Yes", "No"))
+```
+
+```{r}
+pc_dat %>%
+  ggplot(aes(x = PC1, y = PC2, colour = Gensini_bin)) +
+  geom_point(size = 3) + 
+   theme_minimal() + 
+    theme_bw() +
+  labs(title = "Unnormalised Gensini")
+    theme(axis.text.x = element_text(size = 16,
+                                     angle = 90, vjust = 0.5, hjust=1),
+          plot.title = element_text(size = 20, hjust = 0.5),
+          axis.text.y = element_text(size = 16),
+          axis.title.y = element_text(size = 16),
+          axis.title.x = element_text(size = 16),
+          legend.text = element_text(size = 16),
+          legend.title = element_text(size = 16)
+          # legend.position = 'None'
+    )
+```
+
+```{r}
+pc_dat_norm <- data.frame(PC1 = PC_norm$x[, 1], PC2 = PC_norm$x[, 2], sample_id = df_3_norm_mean$sample_id, 
+                     Gensini_bin = factor(df_3_norm_mean$Gensini_bin)) %>%
+  dplyr::mutate(the9 = if_else(sample_id %in% bad_samples, "Yes", "No"))
+```
+
+# Look at MG cell type proportions
+```{r}
+
+```
+

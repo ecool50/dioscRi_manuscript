@@ -1,0 +1,818 @@
+---
+title: "bioheart Deep Learning"
+author: "Elijah WIllie"
+date: "2024-03-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = TRUE) 
+knitr::opts_chunk$set(fig.width=10, fig.height=6) 
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(reticulate)
+  # use_virtualenv('keras_env', required=TRUE)
+  library(keras)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(SKM)
+  library(caret)
+  library(ROCR)
+  library(cvAUC)
+  library(spicyR)
+  library(cyCombine)
+  library(ClassifyR)
+  library(cowplot)
+  library(psych)
+  library(igraph)
+  library(tensorflow)
+  library(Spectrum)
+  library(glmnet)
+  library(ipflasso)
+  library(prioritylasso)
+  library(hopach)
+  library(rpart)
+  library(rpart.plot)
+  # library(ruta)
+  library(ggtree)
+  library(ape)
+  library(grpregOverlap)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+
+# k = backend()     # this where the software used to break
+source('~/Documents/PhD/bioheart_analysis/scripts/autoClass.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/deep_learning_helper_funcs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/customCV.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/predClusters.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/trainClassifier.R')
+# source('~/Documents/PhD/DeepLearning_CyTOF/robust_ae.R')
+set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+# Read in the dataset
+## Study 4
+```{r}
+# study 4
+set.seed(1994)
+df <- fread('../raw_data/bioheart_ct_cytof_data_b4_mg.csv',
+              nThread = 7) %>%
+  as.data.frame() 
+
+# %>%
+#   group_by(sample_id) %>%
+#   slice_sample(n = 5000) 
+
+# df <- df[which(df$mg_cell_type_distinct != ""), ]
+# df <- df[which(df$mg_cell_type_clean != "/remove 34+ contam"), ]
+# df <- df[which(df$mg_cell_type_clean != "CD3+ dirty"), ]
+# df <- df[which(df$mg_cell_type_clean != "nonT"), ]
+# df <- df[which(df$mg_cell_type_clean != "nonTnonB"), ]
+# df <- df[which(df$mg_cell_type_distinct != "other"), ]
+
+df[, useMarkers] <- cyCombine::transform_asinh(df[, useMarkers], markers = useMarkers)
+
+# 
+preProcValues <- preProcess(df[, useMarkers], method = c("range"))
+# 
+df[, useMarkers] <- predict(preProcValues, df[, useMarkers])
+
+```
+
+## Study 3
+```{r}
+df_3 <- fread('../raw_data/study_3_sub.csv',
+              nThread = 7) %>% 
+  as.data.frame() 
+
+# %>%
+#   group_by(sample_id)
+
+df_3[, useMarkers] <- cyCombine::transform_asinh(df_3[, useMarkers], markers = useMarkers)
+
+df_3[, useMarkers] <- predict(preProcValues, df_3[, useMarkers])
+```
+
+# Get the reference sample for training
+```{r}
+res_ind <- ComputeReferenceSample(df, useMarkers)
+```
+
+# Get the encoding dimensions and the number of clusters 
+```{r}
+train_dat <- df[which(df$sample_id == res_ind$refSampleInd), useMarkers]
+encoding_dim <- FuseSOM::computeGridSize(train_dat[, useMarkers])
+```
+
+
+# Define autoencoder model
+```{r, echo=FALSE}
+models <- autoEncoderModel(train_dat = train_dat, input_size = length(useMarkers),
+                           encoding_dim = encoding_dim*2, l2_reg = 1E-02, 
+                           dropout_rate = 0)
+
+# model  <- robust_ae(train_dat[, useMarkers], encoding_dim = encoding_dim*2, batch_size = 16, epochs = 100)
+```
+
+# Predict on study 4
+```{r}
+df_norm <- predict(models$autoencoder_model, as.matrix(df[, useMarkers])) %>%
+  as.data.frame()
+
+colnames(df_norm) <- useMarkers
+
+# df_latent <- predict(models$encoder_model, as.matrix(df[, useMarkers])) %>%
+#   as.data.frame()
+```
+
+# Predict on study 3
+```{r}
+df_3_norm <- predict(models$autoencoder_model, as.matrix(df_3[, useMarkers])) %>%
+  as.data.frame()
+colnames(df_3_norm) <- useMarkers
+
+# df_3_latent <- predict(models$encoder_model, as.matrix(df_3[, useMarkers])) %>%
+#   as.data.frame()
+```
+
+# Create SCE object for study 4 and cluster it
+```{r}
+# df_norm <- df_norm %>%
+#   as.data.frame()
+sce_norm <- SingleCellExperiment(assays = list(norm = t(df_norm[, useMarkers]),
+                                               raw = t(df[, useMarkers])
+),
+colData = df %>% dplyr::select(-useMarkers))
+# sce_norm$clusters <- y_pred
+```
+
+```{r}
+# dim <- dancoDimEst(as.matrix(df_norm),8,20)
+```
+
+
+## Use FuseSOM to cluster the normalised data
+```{r}
+# run FuseSOM clustering
+nclust = 12
+sce_norm <- runFuseSOM(sce_norm, numClusters = nclust, assay = 'norm',
+                       verbose = FALSE, clusterCol = 'clusters')
+# sce_norm$clusters <- sce_temp$clusters
+```
+
+## Look at heatmap
+```{r, fig.height=6, fig.width=8,eval=T}
+scater::plotGroupedHeatmap(sce_norm, 
+                           features = useMarkers, 
+                           group = "clusters", 
+                           block = "clusters",
+                           exprs_values = "norm",
+                           center = TRUE, 
+                           scale = TRUE, 
+                           zlim = c(-2,2),
+                           cluster_rows = FALSE)
+```
+
+
+```{r}
+# filter out clusters 12 and 9 as noise
+# sce_norm <- sce_norm[,sce_norm$clusters != 'cluster_12']
+```
+
+
+# Compute concordance on full data
+```{r}
+computeConcordance(sce_norm$clusters, sce_norm$mg_cell_type_distinct)
+```
+
+# Compute training features
+## Proportions
+```{r}
+# do prediction
+data <- getProp(sce_norm,
+                feature = "clusters", imageID = "sample_id", logit = F)
+
+dat_prop <- data
+data <- 2*asin(sqrt(data))
+
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Gender, Age) %>%
+  distinct()
+clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+
+row_names <- rownames(data)
+
+Age <- clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Age"]
+GenderM <- clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      c("GenderM")]
+
+clinicaldata_info <- cbind(Age, GenderM)
+
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Gensini_bin"])
+
+
+data_logit <- getProp(sce_norm,
+                feature = "clusters", imageID = "sample_id", logit = T)
+colnames(data_logit) <- paste0(colnames(data_logit), "_logit")
+colnames(data) <- paste0(colnames(data), "_prop")
+colnames(dat_prop) <- colnames(data)
+```
+
+## Mean expression
+```{r}
+t <- df_norm
+t$sample_id <- df$sample_id
+
+data_mean <- t %>% 
+  dplyr::group_by(sample_id) %>%
+  dplyr::summarise_at(vars(useMarkers), mean) %>%
+  dplyr::select(-sample_id) %>%
+  as.data.frame()
+
+data_median <- t %>% 
+  group_by(sample_id) %>%
+  summarise_at(vars(useMarkers), median) %>%
+  dplyr::select(-sample_id) %>%
+  as.data.frame()
+
+rownames(data_mean) <- clinicaldata$sample_id
+rownames(data_median) <- clinicaldata$sample_id
+colnames(data_mean) <- paste0(colnames(data_mean), "_mean")
+colnames(data_median) <- paste0(colnames(data_median), "_median")
+```
+
+# Look at CV performance
+```{r, eval=F}
+res.cv <- KFoldCustomEnsemble(dat_prop = data, dat_logit = data_logit, 
+                              dat_mean = data_mean, 
+                              train_y = condition, alpha = 1, 
+                              nRepeats = 10, k = 10, linkage = 'ward.D')
+```
+
+# Train clustering model with scCLassify
+## Select training data 
+```{r}
+set.seed(1994)
+# df_norm <- df_norm
+# df_norm$clusters_mg <- factor(sce_norm$mg_cell_type_distinct)
+df_norm$clusters_fs <- factor(sce_norm$clusters)
+df_norm$sample_id <- sce_norm$sample_id
+
+df_norm_sub <- df_norm[which(df$sample_id == res_ind$refSampleInd), ]
+
+# df_norm_sub <- df_norm %>%
+#   group_by(clusters_fs) %>%
+#   slice_sample(n = 1000)
+```
+
+
+
+```{r, eval=F}
+preds <- model %>%
+  predict(as.matrix(df_3_norm[, useMarkers]))
+
+preds <- max.col(preds) - 1L
+preds <- as.factor(preds)
+
+levels(preds) <- levels(droplevels(df_norm_sub$clusters_fs))
+df_3_clusters <- preds
+table(df_3_clusters)
+```
+
+## Fit SKM neural net model
+```{r, eval=T}
+nnet_model <- SKM::deep_learning(
+  y = df_norm_sub$clusters_fs,
+  x =  as.matrix(df_norm_sub[, useMarkers]),
+  epochs_number = 100,
+  layers = list(list(neurons_number = 12, 
+                      neurons_proportion = NULL, 
+                       activation = "softplus",
+                     ridge_penalty = 5E-04),
+                list(neurons_number = 6, 
+                      neurons_proportion = NULL, 
+                       activation = "softplus",
+                     ridge_penalty = 5E-04),
+                list(neurons_number = 3, 
+                      neurons_proportion = NULL, 
+                       activation = "softplus",
+                     ridge_penalty = 5E-04)),
+  optimizer = 'adamax', seed = 999, 
+  loss_function = 'categorical_crossentropy', 
+  batch_size = 16, learning_rate = 0.005,
+  verbose = TRUE
+)
+```
+
+## Now preedict on study 3
+```{r, eval=T}
+df_3_clusters <- nnet_model %>%
+    predict(as.matrix(df_3_norm))
+df_3_clusters <- df_3_clusters$predicted
+```
+
+
+## Compute features on study 3
+### Generate SCE object and populate clusters
+```{r}
+sce_3_norm <- SingleCellExperiment(assays = list(raw = t(df_3[,useMarkers]),
+                                                 norm = t(df_3_norm[, useMarkers])
+                                          ),
+                                 colData = df_3[, 1:10])
+
+sce_3_norm$fs_cluster <- df_3_clusters
+```
+
+```{r, eval=F}
+set.seed(1994)
+sample_pts_3 <- sample(nrow(df_3), 100000)
+sce_sub_3 <- sce_3_norm[, sample_pts_3]
+
+sce_sub_3 <- scater::runUMAP(sce_sub_3,
+                         subset_row = useMarkers,
+                         exprs_values = "raw",
+                         BPPARAM = BPPARAM, 
+                         n_threads = 7,
+                         metric = 'cosine',
+                         verbose = T)
+
+df_3_raw_umap <- reducedDim(sce_sub_3, 'UMAP') %>%
+    as.data.frame()
+colnames(df_3_raw_umap) <- c('UMAP 1', 'UMAP 2')
+
+df_3_raw_umap$Batch <- sce_sub_3$CyTOF.Batch
+
+# df_raw_umap$Study <- if_else(df_raw_umap$batch %like% '3', '3', '4')
+```
+
+
+```{r, eval=F}
+sce_sub_3 <- scater::runUMAP(sce_sub_3,
+                         subset_row = useMarkers,
+                         exprs_values = "norm",
+                         BPPARAM = BPPARAM, 
+                         n_threads = 7,
+                         metric = 'cosine',
+                         verbose = T)
+
+df_3_norm_umap <- reducedDim(sce_sub_3, 'UMAP') %>%
+    as.data.frame()
+colnames(df_3_norm_umap) <- c('UMAP 1', 'UMAP 2')
+
+df_3_norm_umap$Batch <- sce_sub_3$CyTOF.Batch
+```
+
+```{r, eval=F}
+p.raw.3.umap <- df_3_raw_umap %>% ggplot(aes(`UMAP 1`, `UMAP 2`)) +
+    geom_point(aes(color = `Batch`), size = 1) + 
+    ggtitle('Raw data - Study 3') +
+  theme_bw() + 
+    theme(axis.text.x = element_text(size = 12),
+        plot.title = element_text(size = 15, hjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)
+        ) + scale_color_aaas()
+```
+
+```{r, eval=F}
+p.norm.3.umap <- df_3_norm_umap %>% ggplot(aes(`UMAP 1`, `UMAP 2`)) +
+    geom_point(aes(color = `Batch`), size = 1) + 
+    ggtitle('Normalised data - Study 3') +
+  theme_bw() + 
+    theme(axis.text.x = element_text(size = 12),
+        plot.title = element_text(size = 15, hjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)
+        ) + scale_color_aaas()
+```
+
+```{r, eval=F}
+# pdf(file = "../Plots/study_3_normalised_UMAP_plots.pdf",   # The directory you want to save the file in
+#     width = 8, # The width of the plot in inches
+#     height = 4) # The height of the plot in inches
+cowplot::plot_grid(p.raw.3.umap, p.norm.3.umap)
+# dev.off()
+```
+
+## Generate features
+### Proportions
+```{r}
+data_3 <- getProp(sce_3_norm,
+                feature = "fs_cluster", imageID = "sample_id", logit = F)
+
+
+data_3 <- 2*asin(sqrt(data_3))
+# 
+# data_3_2 <- getProp(sce_3_norm,
+#                   feature = "clusters", imageID = "sample_id", logit = T)
+# data_3 <- cbind(data_3, data_3_2)
+colnames(data_3) <- janitor::make_clean_names(colnames(data_3))
+
+clinicaldata_3 <- colData(sce_3_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Age, Gender) %>%
+  distinct()
+clinicaldata_3$Gensini_bin <- factor(if_else(clinicaldata_3$Gensini > 0, 1, 0))
+encoded_gender_3 <- model.matrix(~Gender-1, data=clinicaldata_3)
+clinicaldata_3 <- cbind(clinicaldata_3, encoded_gender_3)
+
+row_names_3 <- rownames(data_3)
+
+Age_3 <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      "Age"]
+GenderM_3 <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      c("GenderM")]
+
+clinicaldata_info_3 <- cbind(Age, GenderM)
+
+data_3_logit <- getProp(sce_3_norm,
+                feature = "fs_cluster", imageID = "sample_id", logit = T)
+
+condition_3 <- factor(clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      "Gensini_bin"])
+
+colnames(data_3_logit) <- paste0(colnames(data_3_logit), "_logit")
+colnames(data_3) <- paste0(colnames(data_3), "_prop")
+```
+
+
+### Mean expression
+```{r}
+t_3 <- df_3_norm
+t_3$sample_id <- df_3$sample_id
+
+t_3_mean <- t_3 %>% 
+  group_by(sample_id) %>%
+  summarise_at(vars(useMarkers), mean) %>%
+  dplyr::select(-sample_id) %>%
+  as.data.frame()
+
+t_3_median <- t_3 %>% 
+  group_by(sample_id) %>%
+  summarise_at(vars(useMarkers), median) %>%
+  dplyr::select(-sample_id) %>%
+  as.data.frame()
+
+rownames(t_3_mean) <- clinicaldata_3$sample_id
+rownames(t_3_median) <- clinicaldata_3$sample_id
+
+colnames(t_3_mean) <- paste0(colnames(t_3_mean), "_mean")
+colnames(t_3_median) <- paste0(colnames(t_3_median), "_median")
+```
+
+# Overlap Lasso Modelling
+## Fit model
+```{r}
+nclust <- length(unique(sce_norm$clusters))
+overlapModel <- runOverlapLasso(data, data_logit, data_mean, 
+                                nclust = nclust, alpha = 1, 
+                                clinical = F, seed = 999, 
+                                clinicalData = cbind(Age, GenderM))
+fit <- overlapModel$fit
+scaleVals <- overlapModel$scaling
+```
+
+## Set up test data
+```{r}
+X_test_study_3 <- cbind(data_3_logit, t_3_mean, Age_3, GenderM_3)
+# colnames(X_test_study_3) <- janitor::make_clean_names(colnames(X_test_study_3))
+X_test_study_3[, 1:39] <- predict(scaleVals, X_test_study_3[, 1:39])
+X_test_study_3 <- X_test_study_3 %>%
+  as.matrix()
+```
+
+## Predict on test data
+```{r}
+pred_study_3 <- predict(fit, X = X_test_study_3,
+                        type = "response")
+
+dat <- data.frame(preds = pred_study_3, truth = condition_3)
+
+write.csv(as.data.frame(dat),
+          '../auc_data/full_model_auc_study_3.csv')
+
+pred_study_3 <- prediction(pred_study_3, condition_3)
+pred_study_3_perf <- ROCR::performance(pred_study_3, "tpr", "fpr")
+
+
+plt_dat_3 = data.frame(
+  FPR = pred_study_3_perf@x.values[[1]],
+  TPR = pred_study_3_perf@y.values[[1]]
+)
+
+auc_perf_study_3 <- ROCR::performance(pred_study_3, measure = "auc")
+auc_study_3 <- auc_perf_study_3@y.values[[1]]
+```
+
+```{r, fig.height=6, fig.width=8}
+# pdf(file = "../Plots/study_3_predicted_auc_plot.pdf",   # The directory you want to save the file in
+#     width = 8, # The width of the plot in inches
+#     height = 4) # The height of the plot in inches
+# Generate AUC plot
+ggplot(plt_dat_3, aes(x = FPR, y = TPR)) +
+  geom_line(colour = "blue") +
+  labs(x = pred_study_3_perf@x.name, y = pred_study_3_perf@y.name) +
+  geom_abline(slope = 1, intercept = 0) + theme_bw() +
+  theme(
+    plot.title = element_text(color="Black", size=16, face="bold", hjust = 0.5),
+    plot.subtitle = element_text(color = "red", size = 16, hjust = 0.5),
+    axis.title.x = element_text(color="Black", size=16),
+    axis.title.y = element_text(color="Black", size=16),
+    axis.text.y = element_text(size = 16),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 16),
+    strip.text.x = element_text(size = 16),
+    legend.title = element_text(size=16), #change legend title font size
+    legend.text = element_text(size=16) #change legend text font size)
+  )  + ggtitle(paste("Study 3 - AUC =", round(auc_study_3, 2)))
+
+# dev.off()
+```
+
+# Plot overlap tree
+```{r}
+coefs <- coef(fit) %>%
+  as.matrix() %>%
+  as.data.frame()
+coefs$feature <- rownames(coefs)
+res_mp <- MP_gLasso(fit = fit, group = fit$grp.vec, lambda.type = "min", sort.type = "max")
+```
+
+
+## Proportions
+```{r, fig.height=8, fig.width=8}
+p <- plotOverlapTree(hc = overlapModel$hc_logit, coefs = coefs, type = 'logit',
+                     data = res_mp$data, heatmap = F)
+# colnames(dat_prop) <- str_replace(colnames(dat_prop), '_prop', '')
+```
+
+```{r, fig.height=8, fig.width=8}
+pdf(file = "../Plots/Manuscript_Plots/fs_tree.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+# generate the heatmap matrix
+hmat <- generateHeatmapMatrix(df_norm, markers = useMarkers, 
+                              clusters = sce_norm$clusters, threshold = 2) %>%
+  as.data.frame()
+
+gheatmap(p, data = hmat, offset = 0.05, hjust = 1, colnames_offset_y = 0, 
+         color = 'white',legend_title="Proportions") +
+  # vexpand(.001, -1) + 
+      theme(legend.title = element_text(color = "black", size = 10),
+            legend.text = element_text(color = "black", size = 10)) + 
+  scale_fill_gradientn(colours = eval(formals(pheatmap::pheatmap)$color, 
+                                      envir=environment(pheatmap::pheatmap)), 
+                       name = "Mean Expression")
+
+dev.off()
+```
+## Means
+```{r, fig.height=6, fig.width=12}
+# compute offset for mean groups
+offset <- length(overlapModel$hc_logit$data$clusters)
+p.mean <- plotOverlapTree(hc = overlapModel$hc_mean, coefs = coefs, type = 'mean',
+                     data = res_mp$data, heatmap = F, offset = offset)
+colnames(hmat) <- make_clean_names(colnames(hmat))
+```
+
+```{r}
+gheatmap(p.mean, data = t(hmat), offset = 0.05, hjust = 0.75, colnames_offset_y = 0, 
+         color = 'white',legend_title="Proportions") +
+  vexpand(.1, -1) +
+      theme(legend.title = element_text(color = "black", size = 10),
+            legend.text = element_text(color = "black", size = 10)) + 
+  scale_fill_gradientn(colours = eval(formals(pheatmap::pheatmap)$color, 
+                                      envir=environment(pheatmap::pheatmap)), 
+                       name = "Mean Expression")
+```
+
+# Fit a baseline Lasso model
+```{r}
+X_train <- cbind(data_logit, data_mean) %>%
+  as.matrix()
+X_train <- predict(scaleVals, X_train)
+X_train <- X_train %>%
+  as.matrix()
+
+set.seed(999)
+cv.lasso <- cv.glmnet(X_train, condition, family='binomial', alpha=1, parallel=TRUE, 
+                      standardize=F, relax = F, type.measure = 'auc',nfolds = 10)
+plot(cv.lasso)
+coef(cv.lasso, s='lambda.min')
+coef <- coef(cv.lasso, s='lambda.min')
+selected_attributes <- (coef@i[-1]+1)
+
+```
+
+```{r}
+pred_test <- predict(cv.lasso, newx = X_test_study_3[, 1:39], 
+                     type = "response", s = 'lambda.min')
+
+write.csv(as.data.frame(pred_test),
+          '../auc_data/full_model_auc_baseline_study_3.csv')
+
+pred_fs <- prediction(pred_test, condition_3)
+perf_fs <- ROCR::performance(pred_fs, "tpr", "fpr")
+
+
+plt_dat = data.frame(
+  FPR = perf_fs@x.values[[1]],
+  TPR = perf_fs@y.values[[1]]
+)
+
+auc_perf <- ROCR::performance(pred_fs, measure = "auc")
+auc <- auc_perf@y.values[[1]]
+
+# generate AUC plot
+p_auc <- ggplot(plt_dat, aes(x = FPR, y = TPR)) +
+  geom_line(colour = "blue") +
+  labs(x = perf_fs@x.name, y = perf_fs@y.name) +
+  geom_abline(slope = 1, intercept = 0) + theme_bw() +
+  theme(
+    plot.title = element_text(color="Black", size=16, face="bold", hjust = 0.5),
+    plot.subtitle = element_text(color = "red", size = 16, hjust = 0.5),
+    axis.title.x = element_text(color="Black", size=16),
+    axis.title.y = element_text(color="Black", size=16),
+    axis.text.y = element_text(size = 16),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 16),
+    strip.text.x = element_text(size = 16),
+    legend.title = element_text(size=16), #change legend title font size
+    legend.text = element_text(size=16) #change legend text font size)
+  )  + ggtitle(paste("Test Set - AUC =", round(auc, 2)))
+
+p_auc
+```
+
+# Marker mean per cell type
+## Training data
+```{r}
+coldat <- colData(sce_norm) %>%
+  as.data.frame()
+
+# Protein mean per cell type
+markerDf = 
+  coldat |> 
+  dplyr::select(sample_id, clusters) |> 
+  cbind(data.frame(t(assay(sce_norm, "norm")))) |>
+  dplyr::select(sample_id, clusters,useMarkers) %>%
+  filter(clusters != "") %>%
+  filter(clusters != "other")
+
+# Mean marker per cell type
+markerMeanCellType = markerDf |> 
+  group_by(sample_id, clusters) |> 
+  summarise_at(vars(-group_cols()), mean, na.rm = TRUE) |> 
+  pivot_longer(-c(sample_id, clusters), names_to = "markers") |> 
+  pivot_wider(names_from = c(clusters, markers), values_from = value) |> 
+  column_to_rownames("sample_id") %>% 
+  replace(is.na(.), 0)
+
+markerMeanCellType <- log(abs(markerMeanCellType))
+
+```
+
+# Testing data
+```{r}
+coldat_3 <- colData(sce_3_norm) %>%
+  as.data.frame()
+
+# Protein mean per cell type
+markerDf_3 = 
+  coldat_3 |> 
+  dplyr::select(sample_id, fs_cluster) |> 
+  cbind(data.frame(t(assay(sce_3_norm, "norm")))) |>
+  dplyr::select(sample_id, fs_cluster, useMarkers) %>%
+  filter(fs_cluster != "") %>%
+  filter(fs_cluster != "other")
+
+
+# Mean marker per cell type
+markerMeanCellType_3 = markerDf_3 |> 
+  group_by(sample_id, fs_cluster) |> 
+  summarise_at(vars(-group_cols()), mean, na.rm = TRUE) |> 
+  pivot_longer(-c(sample_id, fs_cluster), names_to = "markers") |> 
+  pivot_wider(names_from = c(fs_cluster, markers), values_from = value) |> 
+  column_to_rownames("sample_id") %>% 
+  replace(is.na(.), 0)
+```
+
+```{r}
+nclust <- length(unique(sce_norm$clusters))
+overlapModel <- runOverlapLasso(data, data_logit, markerMeanCellType, 
+                                nclust = nclust, alpha = 1, 
+                                clinical = F, seed = 999, 
+                                clinicalData = cbind(Age, GenderM))
+fit <- overlapModel$fit
+scaleVals <- overlapModel$scaling
+```
+
+
+## Set up test data
+```{r}
+X_test_study_3 <- cbind(data_3_logit, markerMeanCellType_3)
+# colnames(X_test_study_3) <- janitor::make_clean_names(colnames(X_test_study_3))
+X_test_study_3 <- predict(scaleVals, X_test_study_3)
+X_test_study_3 <- X_test_study_3 %>%
+  as.matrix()
+```
+
+## Predict on test data
+```{r}
+pred_study_3 <- predict(fit, X = X_test_study_3,
+                        type = "response")
+
+dat <- data.frame(preds = pred_study_3, truth = condition_3)
+
+# write.csv(as.data.frame(dat),
+#           '../auc_data/full_model_auc_study_3.csv')
+
+pred_study_3 <- prediction(pred_study_3, condition_3)
+pred_study_3_perf <- ROCR::performance(pred_study_3, "tpr", "fpr")
+
+
+plt_dat_3 = data.frame(
+  FPR = pred_study_3_perf@x.values[[1]],
+  TPR = pred_study_3_perf@y.values[[1]]
+)
+
+auc_perf_study_3 <- ROCR::performance(pred_study_3, measure = "auc")
+auc_study_3 <- auc_perf_study_3@y.values[[1]]
+```
+
+```{r, fig.height=6, fig.width=8}
+# pdf(file = "../Plots/study_3_predicted_auc_plot.pdf",   # The directory you want to save the file in
+#     width = 8, # The width of the plot in inches
+#     height = 4) # The height of the plot in inches
+# Generate AUC plot
+ggplot(plt_dat_3, aes(x = FPR, y = TPR)) +
+  geom_line(colour = "blue") +
+  labs(x = pred_study_3_perf@x.name, y = pred_study_3_perf@y.name) +
+  geom_abline(slope = 1, intercept = 0) + theme_bw() +
+  theme(
+    plot.title = element_text(color="Black", size=16, face="bold", hjust = 0.5),
+    plot.subtitle = element_text(color = "red", size = 16, hjust = 0.5),
+    axis.title.x = element_text(color="Black", size=16),
+    axis.title.y = element_text(color="Black", size=16),
+    axis.text.y = element_text(size = 16),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 16),
+    strip.text.x = element_text(size = 16),
+    legend.title = element_text(size=16), #change legend title font size
+    legend.text = element_text(size=16) #change legend text font size)
+  )  + ggtitle(paste("Study 3 - AUC =", round(auc_study_3, 2)))
+
+# dev.off()
+```
+
+# Save SCE file for future use
+```{r, eval=F}
+save(sce_norm, file = "../sce_dat/study_4_autoEncoder_sce.RData")
+save(sce_3_norm, file = "../sce_dat/study_3_autoEncoder_sce.RData")
+```
+

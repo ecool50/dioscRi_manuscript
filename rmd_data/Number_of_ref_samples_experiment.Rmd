@@ -1,0 +1,299 @@
+---
+title: "Number of reference samples experiment"
+author: "Elijah WIllie"
+date: "2024-10-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpregOverlap)
+  library(scales)
+  library(ggnewscale)
+})
+source('~/Documents/PhD/bioheart_analysis/scripts/helperFuncs.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/customCV.R')
+source('~/Documents/PhD/bioheart_analysis/scripts/deep_learning_helper_funcs.R')
+set_random_seed(1994)
+```
+
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+
+# Read in the dataset
+## Study 4
+```{r}
+# study 4
+set.seed(1994)
+df <- fread('../raw_data/bioheart_ct_cytof_data_b4_mg.csv',
+              nThread = 7) %>%
+  as.data.frame()
+
+# rowsum_df <- DelayedMatrixStats::rowSums2(df[, useMarkers] %>% as.matrix())
+# df <- df[rowsum_df != 0, ]
+```
+
+```{r, eval=FALSE}
+df$mg_cell_type_distinct <- dplyr::recode(df$mg_cell_type_distinct,
+                             "CD141+ DCs" = "DCs",
+                            "CD1c+ DCs" = "DCs",
+                            
+                             )
+```
+
+# asinh norm
+```{r}
+# df[, useMarkers] <- sqrt(df[, useMarkers])
+df[, useMarkers]  <- cyCombine::transform_asinh(df[, useMarkers], markers = useMarkers)
+colnames(df)[colnames(df) %in% useMarkers] <- 
+  gsub("_", "-", colnames(df)[colnames(df) %in% useMarkers])
+```
+
+
+## Study 3
+```{r}
+set.seed(1994)
+df_3 <- fread('../Study_3_2019/all_batches_processed_mg_10K.csv',
+              nThread = 7) %>% 
+  as.data.frame()
+
+df_3[, useMarkers]  <- cyCombine::transform_asinh(df_3[, useMarkers], markers = useMarkers)
+colnames(df_3)[colnames(df_3) %in% useMarkers] <- gsub("_", "-", colnames(df_3)[colnames(df_3) %in% useMarkers])
+```
+
+
+```{r}
+useMarkers <- gsub("_", "-", useMarkers)
+allMarkers <- gsub("_", "-", allMarkers)
+
+preProcValues <- preProcess(df[, useMarkers], method = c("knnImpute", "range"))
+
+df_scaled <- df
+df_3_scaled <- df_3
+#
+df_scaled[, useMarkers] <- predict(preProcValues, df_scaled[, useMarkers])
+
+df_3_scaled[, useMarkers] <- predict(preProcValues, df_3_scaled[, useMarkers])
+```
+
+# Set up clinical data for training data
+```{r}
+clinicaldata <- df %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Gender, Age) %>%
+  distinct()
+clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+```
+
+# Set up clinical data for testing data
+```{r}
+clinicaldata_test <- df_3 %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
+  distinct()
+encoded_gender_test <- model.matrix(~Gender-1, data=clinicaldata_test)
+clinicaldata_test <- cbind(clinicaldata_test, encoded_gender_test)
+clinicaldata_test$Gensini_bin <- as.factor(clinicaldata_test$Gensini_bin)
+```
+
+
+```{r}
+train_recon_loss <- c()
+train_mmd <- c()
+train_total <- c()
+
+test_recon_loss <- c()
+test_mmd <- c()
+test_total <- c()
+
+AUCs <- c()
+```
+
+
+```{r}
+nclust = 11
+for(i in 1:10){
+  # fit the model with number of representative samples = i
+  message(paste0("Now fitting for number of ref samples: ", i))
+  res <- runNormModel(train = df_scaled, test = df_3_scaled, 
+                     useMarkers = useMarkers, numSamples = i)
+  
+  sce_train <- res$sce_train
+  sce_test <- res$sce_test
+  
+  # update training lists objects 
+  train_recon_loss[i] <- res$train_vals$reconstruction_loss
+  train_mmd[i] <- res$train_vals$mmd_loss
+  train_total[i] <- res$train_vals$total_loss
+  
+  # update testing lists objects 
+  test_recon_loss[i] <- res$test_vals$reconstruction_loss
+  test_mmd[i] <- res$test_vals$mmd_loss
+  test_total[i] <- res$test_vals$total_loss
+  
+  # Cluster the training SCE object
+  sce_train <- runFuseSOM(sce_train, numClusters = nclust, assay = 'norm',
+                       verbose = FALSE, clusterCol = 'clusters_norm')
+  
+  # Run prediction model
+  pred_model <- runPredictionModel(sce_train = sce_train, sce_test = sce_test, numClusters = nclust, 
+                          clinical_data_train = clinicaldata, 
+                          clinical_data_test = clinicaldata_test, condition = "Gensini_bin")
+  
+  pred_model$plot %>% 
+    plot()
+  AUCs[i] <- auc(pred_model$preds$Truth, pred_model$preds$Predicted) %>% round(2)
+  
+  rm(sce_train)
+  rm(sce_test)
+  
+  gc()
+}
+```
+# Combine results
+```{r}
+res_df <- data.frame(num_samples = 1:10,
+                     AUC = AUCs, train_mmd = train_mmd, train_recon = train_recon_loss,
+                     train_total = train_total, test_mmd = test_mmd, test_recon = test_recon_loss,
+                     Dataset = rep("BioHEART-CT", 10))
+
+write.csv(res_df,
+          '../auc_data/fs_glasso_auc_all_study_ref_samples.csv')
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+# Load the dataset
+df <- read.csv('../auc_data/fs_glasso_auc_all_study_ref_samples.csv') %>%
+  dplyr::mutate(test_total = test_mmd + test_recon)
+
+# Plot 1: AUC vs Lambda
+auc_plot <- ggplot(df, aes(x = num_samples, y = AUC)) +
+  geom_line(size = 1, color = "black") +
+  geom_point(aes(y = AUC)) +
+  labs(title = "",
+       x = "Number of Samples", y = "AUC") +
+  theme_minimal() +
+  scale_x_continuous(labels=as.character(df$num_samples),breaks=df$num_samples)
+
+# Plot 2: Combined MMD (Training and Testing) vs Lambda
+# mmd_plot <- ggplot(df, aes(x = Lambda)) +
+#   geom_line(aes(y = train_mmd, color = "Training"), size = 1) +
+#   geom_line(aes(y = test_mmd, color = "Testing"), size = 1, linetype = "dashed") +
+#   labs(title = "",
+#        x = "Lambda", y = "MMD Loss") +
+#   scale_color_manual(values = c("Training MMD" = "blue", "Testing MMD" = "red")) +
+#   theme_minimal() +
+#       # theme_bw() +
+#       theme(plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+#             plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+#             axis.title.x = element_text(color="Black", size=12),
+#             axis.title.y = element_text(color="Black", size=12),
+#             axis.text.y = element_text(size = 12),
+#             axis.text.x = element_text(size = 12),
+#             strip.text.x = element_text(size = 12),
+#             legend.title = element_blank(), # change legend title font size
+#             legend.text = element_text(size=12), # change legend text font size))
+#             legend.position = "top")
+# 
+# # Plot 3: Combined Reconstruction Loss (Training and Testing) vs lambda
+# recon_plot <- ggplot(df, aes(x = Lambda)) +
+#   geom_line(aes(y = train_recon, color = "Training"), size = 1) +
+#   geom_line(aes(y = test_recon, color = "Testing"), size = 1, linetype = "dashed") +
+#   labs(title = "",
+#        x = "Lambda", y = "Reconstruction Loss") +
+#   scale_color_manual(values = c("Training" = "blue", "Testing" = "red")) +
+#       # theme_bw() +
+#       theme(plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+#             plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+#             axis.title.x = element_text(color="Black", size=12),
+#             axis.title.y = element_text(color="Black", size=12),
+#             axis.text.y = element_text(size = 12),
+#             axis.text.x = element_text(size = 12),
+#             strip.text.x = element_text(size = 12),
+#             legend.title = element_blank(), #change legend title font size
+#             legend.text = element_text(size=12), #change legend text font size))
+#             legend.position = "none")
+
+
+total_loss_plot <- ggplot(df, aes(x = num_samples)) +
+  geom_line(aes(y = train_total, color = "Discovery"), size = 1) +
+  geom_point(aes(y = train_total)) +
+  geom_line(aes(y = test_total, color = "Validation"), size = 1, linetype = "dashed") +
+  geom_point(aes(y = test_total)) +
+  scale_x_continuous(labels=as.character(df$num_samples),breaks=df$num_samples) + 
+  labs(title = "",
+       x = "Number of Samples", y = "Total Loss") +
+  scale_x_continuous(labels=as.character(df$Bottleneck),breaks=df$Bottleneck) +
+  scale_color_manual(values = c("Discovery" = "blue", "Validation" = "red")) +
+      # theme_bw() +
+      theme(plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+            plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+            axis.title.x = element_text(color="Black", size=12),
+            axis.title.y = element_text(color="Black", size=12),
+            axis.text.y = element_text(size = 12),
+            axis.text.x = element_text(size = 12),
+            strip.text.x = element_text(size = 12),
+            legend.title = element_blank(), #change legend title font size
+            legend.text = element_text(size=12), #change legend text font size))
+            legend.position = "top")
+```
+```{r}
+pdf(file = "../Plots/Manuscript_Plots/Supp_fig_4.pdf",   # The directory you want to save the file in
+    width = 8, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+# Combine the three plots into a single panel figure
+cowplot::plot_grid(auc_plot, total_loss_plot, 
+                                    ncol = 1, labels = LETTERS[1:2])
+
+dev.off()
+```
