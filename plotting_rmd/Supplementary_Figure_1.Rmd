@@ -1,0 +1,291 @@
+---
+title: "Supplementary Figure 1"
+author: "Elijah Willie"
+date: "2025-06-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(scales)
+  library(ggnewscale)
+  library(Polychrome)
+  library(caret)
+  library(RColorBrewer)
+})
+source('../scripts/normalisation_plotting.R')
+set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+# Load in sce objects
+```{r}
+load('../../sce_dat/study_4_MMD_VAE_final.RData')
+load('../../sce_dat/study_3_MMD_VAE_final.RData')
+load('../../sce_dat/bioheart_cyCombine_batch_corrected.RData')
+load('../../sce_dat/bioheart_iMUBAC_batch_corrected.RData')
+```
+
+# Update the markers
+```{r}
+useMarkers <- gsub("_", "-", useMarkers)
+allMarkers <- gsub("_", "-", allMarkers)
+```
+
+# Define cell types of interest
+```{r}
+# only use celltypes that is present in both batches
+final_celltypes <- c(
+   "B cells",
+   "CD8hi",
+   "14+ monos",
+   "CD4+ Tconv",
+   "CD8lo",
+   "NK",
+   "16+ monos",
+   "CD4+ Treg",
+   "pDCs",
+   "CD141+ DCs",
+   "CD1c+ DCs"
+    )
+```
+
+
+# Load in teh raw data for the BioHEART datasets
+```{r}
+df_4_raw <- assay(sce_norm, 'raw') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype_new = sce_norm$Celltype_new) %>%
+    dplyr::mutate(Celltype = sce_norm$mg_cell_type_distinct) %>%
+    dplyr::mutate(batch = sce_norm$CyTOF.Batch) %>%
+    dplyr::mutate(sample_id = sce_norm$sample_id) %>%
+    dplyr::mutate(Age = sce_norm$Age) %>%
+    dplyr::mutate(Gender = sce_norm$Gender) %>%
+    dplyr::mutate(Statin = sce_norm$Statin) %>%
+    dplyr::mutate(Gensini = as.factor(sce_norm$gensini_bin)) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+df_3_raw <- assay(sce_3_norm, 'raw') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype_new = sce_3_norm$Celltype_new) %>%
+    dplyr::mutate(Celltype = sce_3_norm$CellTypes) %>%
+    dplyr::mutate(batch = sce_3_norm$Batch) %>%
+    dplyr::mutate(sample_id = sce_3_norm$sample_id) %>%
+    dplyr::mutate(Age = sce_3_norm$Age) %>%
+    dplyr::mutate(Gender = sce_3_norm$Gender) %>%
+    dplyr::mutate(Statin = sce_3_norm$Statin) %>%
+    dplyr::mutate(Gensini = as.factor(sce_3_norm$Gensini_bin)) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+df_raw <- rbind(df_3_raw, df_4_raw)
+
+```
+
+
+# Load in the dioscRi normalised data for the BioHEART datasets
+```{r}
+df_4_norm <- assay(sce_norm, 'norm') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype_new = sce_norm$Celltype_new) %>%
+    dplyr::mutate(Celltype = sce_norm$mg_cell_type_distinct) %>%
+    dplyr::mutate(batch = sce_norm$CyTOF.Batch) %>%
+    dplyr::mutate(sample_id = sce_norm$sample_id) %>%
+    dplyr::mutate(Age = sce_norm$Age) %>%
+    dplyr::mutate(Gender = sce_norm$Gender) %>%
+    dplyr::mutate(Statin = sce_norm$Statin) %>%
+    dplyr::mutate(Gensini = as.factor(sce_norm$gensini_bin)) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+df_3_norm <- assay(sce_3_norm, 'norm') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype_new = sce_3_norm$Celltype_new) %>%
+    dplyr::mutate(Celltype = sce_3_norm$CellTypes) %>%
+    dplyr::mutate(batch = sce_3_norm$Batch) %>%
+    dplyr::mutate(sample_id = sce_3_norm$sample_id) %>%
+    dplyr::mutate(Age = sce_3_norm$Age) %>%
+    dplyr::mutate(Gender = sce_3_norm$Gender) %>%
+    dplyr::mutate(Statin = sce_3_norm$Statin) %>%
+    dplyr::mutate(Gensini = as.factor(sce_3_norm$Gensini_bin)) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+df_norm <- rbind(df_3_norm, df_4_norm)
+```
+
+# Load in the cyCombine normalised data for the BioHEART datasets
+```{r}
+df_norm_cycombine <- assay(sce_cycombine, 'corrected') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype = sce_cycombine$CellType) %>%
+    dplyr::mutate(sample_id = sce_cycombine$sample_id) %>%
+    dplyr::mutate(batch = sce_cycombine$batch) %>%
+    dplyr::mutate(Gensini = sce_cycombine$Gensini_bin) %>%
+    dplyr::mutate(Statin = sce_cycombine$Statin) %>%
+    dplyr::mutate(Age = sce_cycombine$Age) %>%
+    dplyr::mutate(Gender = sce_cycombine$Gender) %>%
+    # dplyr::filter(batch == 4)  %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+```
+
+# Load in the iMUBAC normalised data for the BioHEART datasets
+```{r}
+df_norm_imubac <- assay(sce_imubac, 'normexprs') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype = sce_imubac$CellType) %>%
+    dplyr::mutate(sample_id = sce_imubac$sample_id) %>%
+    dplyr::mutate(batch = sce_imubac$batch) %>%
+    dplyr::mutate(Gensini = sce_imubac$Gensini_bin) %>%
+    dplyr::mutate(Statin = sce_imubac$Statin) %>%
+    dplyr::mutate(Age = sce_imubac$Age) %>%
+    dplyr::mutate(Gender = sce_imubac$Gender) %>%
+    # dplyr::filter(batch == 4) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+```
+
+```{r}
+# put the data on the same scale as the normalised for comparison
+preProcValues_raw <- preProcess(df_4_raw[, useMarkers], method = c("range"))
+df_4_raw[, useMarkers] <- predict(preProcValues_raw, df_4_raw[, useMarkers])
+
+preProcValues_cycombine <- preProcess(df_norm_cycombine[, useMarkers], method = c("range"))
+df_norm_cycombine[, useMarkers] <- predict(preProcValues_cycombine, df_norm_cycombine[, useMarkers])
+
+preProcValues_imubac <- preProcess(df_norm_imubac[, useMarkers], method = c("range"))
+df_norm_imubac[, useMarkers] <- predict(preProcValues_imubac, df_norm_imubac[, useMarkers])
+
+preProcValues_raw <- preProcess(df_raw[, useMarkers], method = c("range"))
+df_raw[, useMarkers] <- predict(preProcValues_raw, df_raw[, useMarkers])
+```
+
+
+
+```{r}
+samples <- unique(df_raw$sample_id)
+
+t_raw <- get_summaries_per_channel(data = df_raw, 
+                                   markers = useMarkers, samples = samples)
+
+t_norm <- get_summaries_per_channel(data = df_norm, 
+                                   markers = useMarkers, samples = samples)
+
+t_norm_cycombine <- get_summaries_per_channel(data = df_norm_cycombine, 
+                                   markers = useMarkers, samples = samples)
+
+t_norm_imubac <- get_summaries_per_channel(data = df_norm_imubac, 
+                                   markers = useMarkers, samples = samples)
+```
+
+## Supp Figure 1A
+```{r}
+p.box.sample <- boxSummaryValsPrePost_ggplot(raw = t_raw, dioscri = t_norm, 
+                                         cycombine = t_norm_cycombine,
+                                         imubac = t_norm_imubac, legendPos = "bottom",
+                                         type = "both", title = "Mean of cell sample expression")
+
+pdf(file = "../Plots/Supp_Figure_1_sample_box.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.box.sample
+dev.off()
+```
+
+## Supp Figure 1B
+```{r}
+p.var.sample <- varBarPlot_ggplot(raw = t_raw, dioscri = t_norm, 
+                                         cycombine = t_norm_cycombine,
+                                         imubac = t_norm_imubac, legendPos = "bottom",
+                                         type = "both", title = "Variance of sample expression")
+
+pdf(file = "../Plots/Supp_Figure_1_sample_var_plot.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.var.sample
+dev.off()
+```
+
+```{r}
+celltypes <- final_celltypes
+
+t_raw_mg <- get_summaries_per_celltype(data = df_raw, 
+                                   markers = useMarkers, celltypes = celltypes)
+
+t_norm_mg <- get_summaries_per_celltype(data = df_norm, 
+                                   markers = useMarkers, celltypes = celltypes)
+
+t_norm_cycombine_mg <- get_summaries_per_celltype(data = df_norm_cycombine, 
+                                   markers = useMarkers, celltypes = celltypes)
+
+t_norm_imubac_mg <- get_summaries_per_celltype(data = df_norm_imubac, 
+                                   markers = useMarkers, celltypes = celltypes)
+```
+
+# Supp Figure 1C
+```{r}
+p.box.mg <- boxSummaryValsPrePost_ggplot(raw = t_raw_mg, dioscri = t_norm_mg, 
+                                         cycombine = t_norm_cycombine_mg,
+                                         imubac = t_norm_imubac_mg, legendPos = "bottom",
+                                         type = "both", title = "Mean of cell type expression")
+
+pdf(file = "../Plots/Supp_Figure_1_celltype_box.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.box.mg
+dev.off()
+```
+
+# Supp Figure 1D
+```{r}
+p.var.mg <- varBarPlot_ggplot(raw = t_raw_mg, dioscri = t_norm_mg, 
+                                         cycombine = t_norm_cycombine_mg,
+                                         imubac = t_norm_imubac_mg, legendPos = "bottom",
+                                         type = "both", title = "Variance of cell type expression")
+
+pdf(file = "../Plots/Supp_Figure_1_celltype_var_plot.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.var.mg
+dev.off()
+```
+
+

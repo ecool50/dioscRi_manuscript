@@ -1,0 +1,501 @@
+---
+title: "Code to generate various parts of Figure 3"
+author: "Elijah WIllie"
+date: "2024-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(ROCR)
+  library(pROC)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+  library(dioscRi)
+})
+source('../scripts/normalisation_plotting.R')
+set_random_seed(1994)
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA-DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c-PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+# Load normalised data
+```{r}
+load('../../sce_dat/study_4_MMD_VAE_updated.RData')
+load('../../sce_dat/study_3_MMD_VAE_updated.RData')
+```
+
+# Update the markers
+```{r}
+useMarkers <- gsub("_", "-", useMarkers)
+allMarkers <- gsub("_", "-", allMarkers)
+```
+
+# Train clustering model with Caret
+## Select training and testing data
+```{r}
+train_x <- reducedDim(sce_norm, type = "VAE") %>%
+  dplyr::mutate(cellTypes = sce_norm$mg_cell_type_distinct)
+
+
+test_x <- reducedDim(sce_3_norm, type = "VAE") %>%
+  as.data.frame()
+```
+
+## Fit SVM model
+```{r, eval=T}
+df_3_clusters <- dioscRi::trainCellTypeClassifier(trainX = train_x, testX = test_x, 
+                                                  model = 'lda')
+
+table(df_3_clusters)
+
+sce_3_norm$mg_clusters <- df_3_clusters
+```
+
+# Setup Clinical information
+## Study 4
+```{r}
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Gender, Age) %>%
+  distinct()
+clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+
+```
+
+## Study 3
+```{r}
+clinicaldata_3 <- colData(sce_3_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
+  distinct()
+# clinicaldata_3$Gensini_bin <- factor(if_else(clinicaldata_3$Gensini > 0, 1, 0))
+encoded_gender_3 <- model.matrix(~Gender-1, data=clinicaldata_3)
+clinicaldata_3 <- cbind(clinicaldata_3, encoded_gender_3)
+clinicaldata_3$Gensini_bin <- as.factor(clinicaldata_3$Gensini_bin)
+```
+
+
+# Compute training features
+## Proportions
+```{r}
+sce_norm <- sce_norm[, sce_norm$mg_cell_type_distinct != "other"]
+sce_norm <- sce_norm[, sce_norm$mg_cell_type_distinct != ""]
+# sce_norm$mg_cell_type_distinct <- droplevels(sce_norm$mg_cell_type_distinct)
+data_logit <- computeFeatures(sce = sce_norm, featureType = 'prop', 
+                              cellTypeCol = 'mg_cell_type_distinct', 
+                              sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+row_names <- rownames(data_logit)
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Gensini_bin"])
+
+data <- computeFeatures(sce = sce_norm, featureType = 'prop', 
+                              cellTypeCol = 'mg_cell_type_distinct', sampleCol = 'sample_id', 
+                              logit = F, useMarkers = useMarkers)
+Age <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Age"])
+GenderM <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      c("GenderM")])
+
+clinicaldata_info <- cbind(Age, GenderM)
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType <- computeFeatures(sce = sce_norm, featureType = 'mean', assay = "norm",
+                              cellTypeCol = 'mg_cell_type_distinct', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+
+## Compute features on study 3
+## Proportions
+```{r}
+sce_3_norm <- sce_3_norm[, sce_3_norm$mg_clusters != "other"]
+sce_3_norm <- sce_3_norm[, sce_3_norm$mg_clusters != ""]
+sce_3_norm$mg_clusters <- droplevels(sce_3_norm$mg_clusters)
+
+data_3_logit <- computeFeatures(sce = sce_3_norm, featureType = 'prop', 
+                              cellTypeCol = 'mg_clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+row_names_3 <- rownames(data_3_logit)
+condition_3 <- factor(clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      "Gensini_bin"])
+
+Age <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      "Age"]
+GenderM <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      c("GenderM")]
+
+clinicaldata_info_3 <- cbind(Age, GenderM)
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType_3 <- computeFeatures(sce = sce_3_norm, featureType = 'mean',  assay = "norm",
+                              cellTypeCol = 'mg_clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+# Generate Tree
+```{r, eval=T}
+root <- Node$new("Root")
+  myeloid <- root$AddChild('Myeloid_logit')
+    `14+ monos` <- myeloid$AddChild('14+ monos_logit')
+    `16+ monos` <- myeloid$AddChild('16+ monos_logit') 
+    pDCs <- myeloid$AddChild('pDCs_logit')
+    `CD141+ DCs` <- myeloid$AddChild('CD141+ DCs_logit')
+    `CD1c+ DCs` <- myeloid$AddChild('CD1c+ DCs_logit')
+  NK <- root$AddChild('NK_logit')
+  `B cells` <- root$AddChild('B cells_logit')
+  CD3 <- root$AddChild('CD3_logit')
+    CD8hi <- CD3$AddChild('CD8hi_logit')
+    CD8lo <- CD3$AddChild('CD8lo_logit')
+    CD4 <- CD3$AddChild('CD4_logit')
+      `CD4+ Tconv` <- CD4$AddChild('CD4+ Tconv_logit')
+      `CD4+ Treg` <- CD4$AddChild('CD4+ Treg_logit')
+  # other <- root$AddChild('other_logit')
+```
+
+# Generate grouping structures
+```{r}
+nclust <- ncol(data_logit)
+# root <- as.phylo(root)
+order <- as.phylo(root)$tip.label
+tree <- treekoR:::findChildren(ggtree(as.phylo(root),
+                                            ladderize = F, layout = 'dendrogram'))
+
+groups <- generateGroups(tree = tree, nClust = nclust, 
+                         proportions = data_logit, means = markerMeanCellType)
+```
+
+# Add the clinical data in
+```{r, eval=F}
+groups[[length(groups) + 1]] <- 309:310
+```
+
+# Process training and testing data
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- cbind(data_logit, markerMeanCellType) 
+  
+  # Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+# X_train <- cbind(X_train, clinicaldata_info)
+# Extract response variable
+y_train <- as.numeric(levels(condition))[condition]
+```
+
+## Testing
+```{r}
+X_test <- cbind(data_3_logit, markerMeanCellType_3) %>%
+  as.matrix()
+# colnames(X_test_study_3) <- janitor::make_clean_names(colnames(X_test_study_3))
+X_test <- predict(scaleVals, X_test)
+# X_test <- cbind(X_test, clinicaldata_info_3)
+y_test <- as.numeric(levels(condition_3))[condition_3]
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994, alpha = NULL)
+```
+
+## Predict on the training data
+```{r}
+train_auc <- plotAUC(fit = fit$fit, xTest = X_train, yTest = y_train, title = "Study 4 MG - All AUC =")
+train_auc$plot
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 MG - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../auc_data/mg_dioscRi_auc_all_study_3.csv')
+
+```
+
+
+
+# Visualise Resulting Tree (Figure 3B)
+```{r, fig.height=20, fig.width=40}
+# tiff("../Plots/test.png", units="in", width=16, height=10, res=300)
+p.all <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", trainingData = X_train,
+                   nodesToRemove =  c("Root", "Myeloid", "CD3", "CD4"), title = "Proportions + Marker Means")
+
+pdf(file = "../Plots/Figure_3_tree_full_manual_gating.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+    p.all 
+dev.off()
+# dev.off()
+# ggsave(file="../Plots/mg_tree.svg", plot=p, width=18, height=16, dpi = 1200)
+```
+
+# Look at just the proportions
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- data_logit
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+```
+
+## Testing
+```{r}
+X_test<- data_3_logit %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+```
+
+```{r}
+groups <- generateGroups(tree = tree, nClust = nclust, proportions = data_logit,
+                         means = markerMeanCellType, type = "prop")
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994)
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 MG - All AUC =")
+test_auc$plot
+# 
+write.csv(test_auc$preds,
+          '../auc_data//mg_dioscRi_auc_prop_study_3.csv')
+
+```
+
+## Look at tree plot (Figure 3A)
+```{r, fig.height=15, fig.width=40}
+p.prop <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", trainingData = X_train,
+                   nodesToRemove =  c("Root", "Myeloid", "CD3", "CD4"), heatmap = FALSE)
+
+pdf(file = "../Plots/Figure_3_tree_prop_manual_gating.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+    p.prop 
+dev.off()
+```
+
+# Look at just the means
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- markerMeanCellType
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+```
+
+## Testing
+```{r}
+X_test <- markerMeanCellType_3 %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+```
+
+```{r}
+groups <- as.list(seq (1,ncol(markerMeanCellType),1)) 
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994)
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 MG - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../auc_data/mg_dioscRi_auc_means_study_3.csv')
+
+
+
+```
+
+## Look at heatmap plot (Figure 3C)
+```{r, fig.height=15, fig.width=40}
+order <- gsub("_logit", "", order)
+order <- gsub("_", " ", order)
+p.means <- plotHeatmap(fit$fit, type = "MG", order = order)
+
+pdf(file = "../Plots/Figure_3_tree_means_manual_gating.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 8) # The height of the plot in inches
+    p.means 
+dev.off()
+```
+
+# Define some color schemes
+```{r}
+all_colors <- c(
+  "#1f77b4",  # Blue
+  "#ff7f0e",  # Orange
+  "#9467bd",  # Purple
+  "#8c564b",  # Brown
+  "#e377c2",  # Pink
+  "#7f7f7f",  # Gray
+  "#bcbd22",  # Olive-yellow
+  "#17becf",  # Cyan
+  "#aec7e8",  # Light blue
+  "#c5b0d5"   # Lavender
+)
+my_colors_1 <- c(
+  "Prop" = all_colors[[3]],         # soft blue
+  "Means" = all_colors[[4]],        # warm amber/orange
+  "Means + Prop" = all_colors[[5]]  # muted teal (not green-looking)
+)
+my_colors_2 <- c(
+  "Age + Sex" = all_colors[[8]],         # soft blue
+  "Means + Prop" = all_colors[[9]],        # warm amber/orange
+  "Means + Prop + Age + Sex" = all_colors[[10]]  # muted teal (not green-looking)
+)
+```
+
+
+## Figure 3D
+```{r}
+prop <- fread('../auc_data/fs_dioscRi_auc_prop_study_3.csv')
+means <- fread('../auc_data/fs_dioscRi_auc_means_study_3.csv')
+full <- fread('../auc_data/fs_dioscRi_auc_all_study_3.csv')
+
+prop_roc <- roc(prop, Truth, Predicted)
+means_roc <- roc(means, Truth, Predicted)
+full_roc <- roc(full, Truth, Predicted)
+
+p.fs <- ggrocs(rocs = list("Prop" = prop_roc, 
+                   "Means" = means_roc,
+                   "Means + Prop" = full_roc), 
+        data_name = "Performance for unsupervised clustering", legend_title = "Data",
+        legend_order = c("Prop","Means", "Means + Prop"), 
+        color_scale = my_colors_1, which_plot = "bar")
+
+pdf(file = "../Plots/Figure_3_unsupervised_bar_auc.pdf",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+    p.fs
+dev.off()
+```
+## Figure 3E
+```{r}
+prop_mg <- fread('../auc_data/mg_dioscRi_auc_prop_study_3.csv')
+means_mg <- fread('../auc_data/mg_dioscRi_auc_means_study_3.csv')
+full_mg <- fread('../auc_data/mg_dioscRi_auc_all_study_3.csv')
+
+prop_mg_roc <- roc(prop_mg, Truth, Predicted)
+means_mg_roc <- roc(means_mg, Truth, Predicted)
+full_mg_roc <- roc(full_mg, Truth, Predicted)
+
+p.mg <- ggrocs(rocs = list("Prop" = prop_mg_roc, 
+                   "Means" = means_mg_roc,
+                   "Means + Prop" = full_mg_roc), 
+        data_name = "Performance for manual gated clusters", legend_title = "Data",
+        legend_order = c("Prop","Means", "Means + Prop"),
+        color_scale = my_colors_1, which_plot = "bar")
+
+pdf(file = "../Plots/Figure_3_manual_gating_bar_auc.pdf",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+    p.mg 
+dev.off()
+```
+## Figure 3F
+```{r}
+age_sex <- fread('../auc_data/fs_glasso_auc_all_study_3_clinical_only.csv')
+full_fs <- full_fs <- fread('../auc_data/fs_dioscRi_auc_all_study_3.csv')
+full_age_sex <- fread('../auc_data/fs_dioscRi_auc_all_clinical_study_3.csv')
+
+age_sex_roc <- roc(age_sex, Truth, Predicted)
+full_fs_roc <- roc(full_fs, Truth, Predicted)
+full_age_sex_roc <- roc(full_age_sex, Truth, Predicted)
+
+p.fs.clinical <- ggrocs(rocs = list("Age + Sex" = age_sex_roc, 
+                   "Means + Prop" = full_fs_roc,
+                   "Means + Prop + Age + Sex" = full_age_sex_roc), 
+        data_name = "Performance for unsupervised clustering", legend_title = "Data",
+        color_scale = my_colors_2)
+
+pdf(file = "../Plots/Figure_3_unsupervised_clinical_bar_auc.pdf",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+    p.fs.clinical
+dev.off()
+```
+
+## Figure 3G
+```{r}
+age_sex <- fread('../auc_data/fs_glasso_auc_all_study_3_clinical_only.csv')
+full_mg <- full_fs <- fread('../auc_data/mg_dioscRi_auc_all_study_3.csv')
+full_mg_age_sex <- fread('../auc_data/mg_dioscRi_auc_all_clinical_study_3.csv')
+
+age_sex_roc <- roc(age_sex, Truth, Predicted)
+full_mg_roc <- roc(full_mg, Truth, Predicted)
+full_mg_age_sex_roc <- roc(full_mg_age_sex, Truth, Predicted)
+
+p.mg.clinical <- ggrocs(rocs = list("Age + Sex" = age_sex_roc, 
+                   "Means + Prop" = full_mg_roc,
+                   "Means + Prop + Age + Sex" = full_mg_age_sex_roc), 
+        data_name = "Performance for manual gated clusters", legend_title = "Data",
+        color_scale = my_colors_2)
+
+pdf(file = "../Plots/Figure_3_manual_gating_clinical_bar_auc.pdf",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+    p.mg.clinical
+dev.off()
+```

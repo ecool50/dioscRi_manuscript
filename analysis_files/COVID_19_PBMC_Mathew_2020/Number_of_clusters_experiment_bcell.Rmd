@@ -1,0 +1,200 @@
+---
+title: "Number of clusters experiment - Breast Cancer"
+author: "Elijah Willie"
+date: "2024-10-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpreg)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+files.sources = list.files(path = '../../../bioheart_analysis/VaeTOF/VaeTOF/R/', full.names = T)
+sapply(files.sources, source)
+source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
+# source('~/Documents/PhD/bioheart_analysis/DeepLasso/scripts/deep_learning_helper_funcs.R')
+setwd('~/Documents/PhD/DeepLearning_CyTOF/COVID_19_PBMC_Mathew_2020/')
+set_random_seed(1994)
+```
+
+# Load in data and compute the reference sample
+```{r}
+metadata <- read.csv('../data/Covid_Bcell_metadata.csv')
+metadata$time_days <- factor(metadata$time_days)
+
+# CD45RA, PD-1, CXCR5, TCF-1, CD38, CD95, Eomes, CCR7, KI67, CD16, CD27, 
+# CX3CR1, CD39, CD20, T-bet, and HLA-DR
+useMarkers <- c("CD45RA.BUV395","PD.1.BV421","CXCR5.BB515","TCF.1.AF647", 
+                "CD38.BUV661","CD39.APCFire750","CD95.BV650", "Eomes.PEef610",
+                "CCR7.BB700", "Ki.67.AF700","CD16.BUV615", "CD27.BUV737",
+                "CX3CR1.BB790", "CD20.BUV805", "T.bet.PE.Cy7", "HLA.DR.BV786")
+
+```
+
+# Load normalised data
+```{r}
+load('../data/bcell_down_sampled_train_MMD_VAE_sce.RData')
+load('../data/bcell_down_sampled_test_MMD_VAE_sce.RData')
+```
+
+# Create functions to run the prediction models
+```{r}
+runPredictionModel <- function(sce_train, sce_test, numClusters,
+                               clinical_data_train, clinical_data_test){
+  # cluster data into k clusters
+  sce_train <- runFuseSOM(sce_train, numClusters = numClusters, assay = 'norm',
+                       verbose = FALSE, clusterCol = 'clusters')
+  
+  # get training and testing data
+  train_x <- reducedDim(sce_train, type = "VAE") %>%
+  mutate(cellTypes = as.factor(sce_train$clusters))
+  test_x <- reducedDim(sce_test, type = "VAE")
+  
+  # fit cell type classifier
+  test_cluster <- cellTypeClassifier(train_x, test_x, model = 'lda')
+  sce_test$clusters <- as.factor(test_cluster)
+  
+  # Compute training features
+  data_logit_train <- computeFeatures(sce = sce_train, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  row_names_train <- rownames(data_logit_train)
+  condition_train <- factor(clinical_data_train[match(row_names_train,clinical_data_train$sample_id),
+                                      "condition"])
+  colnames(data_logit_train) <- as.factor(colnames(data_logit_train))
+  markerMeanCellType_train <- computeFeatures(sce = sce_train, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  colnames(markerMeanCellType_train) <- as.factor(colnames(markerMeanCellType_train))
+  
+  # compute testing features
+   data_logit_test <- computeFeatures(sce = sce_test, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  row_names_test <- rownames(data_logit_test)
+  condition_test <- factor(clinical_data_test[match(row_names_test,clinical_data_test$sample_id),
+                                      "condition"])
+  colnames(data_logit_test) <- as.factor(colnames(data_logit_test))
+  markerMeanCellType_test <- computeFeatures(sce = sce_test, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  colnames(markerMeanCellType_test) <- as.factor(colnames(markerMeanCellType_test))
+  
+  
+  # generate tree
+  trees <- generateTree(features = data_logit_train, method = "ward")
+  tree <- trees$tree
+  order <- trees$order
+  groups <- generateGroups(tree = tree, nClust = numClusters, 
+                         proportions = data_logit_train, 
+                         means = markerMeanCellType_train)
+  
+  
+  # Combine the feature matrices
+  X_train <- cbind(data_logit_train, markerMeanCellType_train) 
+    
+  # Scale the combined data
+  scaleVals <- preProcess(X_train, method = c('scale'))
+  X_train <- predict(scaleVals, X_train) %>%
+      as.matrix()
+    
+ # Extract response variable
+  y_train <- as.numeric(levels(condition_train))[condition_train]
+  # combine feature matrices for the test data
+  X_test <- cbind(data_logit_test, markerMeanCellType_test) %>%
+  as.matrix()
+  X_test <- predict(scaleVals, X_test)
+  y_test <- as.numeric(levels(condition_test))[condition_test]
+  
+  # Fit the overlap group lasso model
+  groups <- lapply(groups, sort)
+  fit <- fitModel(xTrain = X_train, yTrain = y_train, modelSummary = F,
+                groups = groups, penalty = "grLasso", seed = 1994)
+  
+  test_auc <- plotAUC(fit = fit$fit, xTest = X_test, 
+                      yTest = y_test, title = "")
+  return(test_auc)
+}
+```
+
+# Set up clinical data
+## Training
+```{r}
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, condition) %>%
+  distinct()
+clinicaldata$sample_id <- as.character(clinicaldata$sample_id)
+
+clinicaldata$condition <- factor(if_else(clinicaldata$condition == "COVID", 1, 0))
+```
+
+## Testing
+```{r}
+clinicaldata_test <- colData(sce_norm_test) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, condition) %>%
+  distinct()
+clinicaldata_test$sample_id <- as.character(clinicaldata_test$sample_id)
+
+clinicaldata_test$condition <- factor(if_else(clinicaldata_test$condition == "COVID", 1, 0))
+```
+
+
+```{r}
+clusters <- seq(6,16)
+AUCs <- c()
+
+for(i in 1:length(clusters)){
+  numClusters <- clusters[i]
+  res <- runPredictionModel(sce_train = sce_norm, sce_test = sce_norm_test, numClusters = numClusters, 
+                          clinical_data_train = clinicaldata, clinical_data_test = clinicaldata_test)
+  
+  res$plot
+  AUCs[i] <- auc(res$preds$Truth, res$preds$Predicted) %>% round(2)
+}
+
+```
+
+# Generate line plot of results
+```{r}
+res_df <- data.frame(Cluster = clusters,
+                     AUC = AUCs, Dataset = rep("Mathew et al COVID−19", 11))
+
+write.csv(res_df,
+          '../data/bcell_dioscRi_aucs_multi_cluster.csv')
+```
+
+
+```{r}
+ggplot(data=res_df, aes(x=Cluster, y=AUC)) +
+  geom_line()+
+  geom_point()
+```
+

@@ -1,0 +1,437 @@
+---
+title: "Bioheart Prediction"
+author: "Elijah WIllie"
+date: "2024-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(ROCR)
+  library(pROC)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+  library(dioscRi)
+})
+source('../scripts/normalisation_plotting.R')
+set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+# Update the markers
+```{r}
+useMarkers <- gsub("_", "-", useMarkers)
+allMarkers <- gsub("_", "-", allMarkers)
+cluster_col <- "clusters_norm"
+```
+
+
+# Load normalised data
+```{r}
+load('../../sce_dat/study_4_MMD_VAE_updated.RData')
+load('../../sce_dat/study_3_MMD_VAE_updated.RData')
+```
+
+## Use FuseSOM to cluster the normalised data
+```{r, eval=T}
+# run FuseSOM clustering
+nclust = 11
+sce_norm$cluster_col <- NULL
+sce_norm <- runFuseSOM(sce_norm, numClusters = nclust, assay = 'norm',
+                       verbose = FALSE, clusterCol = 'clusters_norm')
+```
+
+# Annotate clustering with expert annotations
+```{r, eval=T}
+sce_norm$clusters_norm <- recode_factor(sce_norm$clusters_norm,
+                                 "cluster_1" = "NK", # NK Cells
+                                 "cluster_2" = "Not Naive CD8+ T cells", # Not Naive CD8+ T cells
+                                 "cluster_3" = "Naive CD8+ T cells", # Naive CD8+ T cells
+                                 "cluster_4" = "NK/Mixed", # NK Cells
+                                 "cluster_5" = "Naive B Cells", # mix of monocytes and dendritic cells
+                                 "cluster_6" = "CD4+ Tconv", # mix of naïve CD4+ T cells, B cells and NK cells
+                                 "cluster_7" = "Memory B cells", # B cells
+                                 "cluster_8" = "16+ monocytes", # NK cells
+                                 "cluster_9" = "CD141+ DC/pDCs", # central memory CD8+ T cells
+                                 "cluster_10" = "14+ monocytes", # naïve CD8+ T cells
+                                 "cluster_11" = "CD4+ Treg" # terminal effector memory revertant CD8+ T cells
+                                 )
+```
+
+# Look at the clustering performance per sample
+```{r}
+df_norm <- assay(sce_norm, type = "norm") %>%
+  t() %>%
+  as.data.frame() %>%
+  mutate(predicted_norm = sce_norm$clusters_norm)
+```
+
+# Train clustering model with Caret
+## Select training and testing data
+```{r}
+train_x <- reducedDim(sce_norm, type = "VAE") %>%
+  dplyr::mutate(cellTypes = as.factor(sce_norm$clusters_norm))
+
+test_x <- reducedDim(sce_3_norm, type = "VAE")
+```
+
+```{r, eval=T}
+df_3_clusters <- trainCellTypeClassifier(trainX = train_x, testX = test_x, model = 'lda')
+
+table(df_3_clusters)
+
+sce_3_norm$clusters <- as.factor(df_3_clusters)
+```
+
+# Compute training features
+## Proportions
+```{r}
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Gender, Age) %>%
+  distinct()
+clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+```
+
+## Generate features
+### Proportions
+```{r}
+clinicaldata_3 <- colData(sce_3_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
+  distinct()
+encoded_gender_3 <- model.matrix(~Gender-1, data=clinicaldata_3)
+clinicaldata_3 <- cbind(clinicaldata_3, encoded_gender_3)
+clinicaldata_3$Gensini_bin <- as.factor(clinicaldata_3$Gensini_bin)
+```
+
+
+# Compute training features
+## Proportions
+```{r}
+data_logit <- computeFeatures(sce = sce_norm, featureType = 'prop', 
+                              cellTypeCol = cluster_col, sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+data <- computeFeatures(sce = sce_norm, featureType = 'prop', 
+                              cellTypeCol = cluster_col, sampleCol = 'sample_id', 
+                              logit = F, useMarkers = useMarkers)
+
+row_names <- rownames(data_logit)
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Gensini_bin"])
+
+Age <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Age"])
+GenderM <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      c("GenderM")])
+
+clinicaldata_info <- cbind(Age, GenderM)
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType <- computeFeatures(sce = sce_norm, featureType = 'mean', 
+                              cellTypeCol = cluster_col, sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+colnames(markerMeanCellType) <- as.factor(colnames(markerMeanCellType))
+```
+
+
+## Compute features on study 3
+## Proportions
+```{r}
+data_3_logit <- computeFeatures(sce = sce_3_norm, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+row_names_3 <- rownames(data_3_logit)
+condition_3 <- factor(clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      "Gensini_bin"])
+colnames(data_3_logit) <- as.factor(colnames(data_3_logit))
+
+Age <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      "Age"]
+GenderM <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      c("GenderM")]
+
+clinicaldata_info_3 <- cbind(Age, GenderM)
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType_3 <- computeFeatures(sce = sce_3_norm, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+colnames(markerMeanCellType) <- as.factor(colnames(markerMeanCellType))
+```
+
+
+# Generate grouping structures
+```{r}
+nclust <- length(unique(sce_norm$clusters_norm))
+trees <- generateTree(features = data_logit, method = "ward")
+tree <- trees$tree
+order <- trees$order
+groups <- generateGroups(tree = tree, nClust = nclust, 
+                         proportions = data_logit, means = markerMeanCellType)
+```
+
+# Add the clinical data in
+```{r, eval=F}
+groups[[length(groups) + 1]] <- 309:310
+```
+
+# Process training and testing data
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- cbind(data_logit, markerMeanCellType) 
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+# X_train <- cbind(X_train, clinicaldata_info)
+# Extract response variable
+y_train <- as.numeric(levels(condition))[condition]
+```
+
+## Testing
+```{r}
+X_test <- cbind(data_3_logit, markerMeanCellType_3) %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+# X_test <- cbind(X_test, clinicaldata_info_3)
+y_test <- as.numeric(levels(condition_3))[condition_3]
+```
+
+
+## Fit Overlap model
+```{r}
+groups <- lapply(groups, sort)
+fit <- fitModel(xTrain = X_train, yTrain = y_train, modelSummary = F,
+                groups = groups, penalty = "grLasso", seed = 1994)
+```
+
+```{r}
+train_auc <- plotAUC(fit = fit$fit, xTest = X_train, yTest = y_train, title = "Study 3 - All AUC =")
+train_auc$plot
+```
+
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = condition_3, title = "Study 3 - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../auc_data/fs_dioscRi_auc_all_study_3.csv')
+
+```
+
+# Visualise Resulting Tree (Supplementary Figure 2C)
+```{r, fig.height=20, fig.width=40}
+p.all <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG",
+                   trainingData = X_train, title = "Unsupervised Clustering")
+
+pdf(file = "../Plots/Supp_Figure_2_tree_full_unsupervised.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 12) # The height of the plot in inches
+    p.all 
+dev.off()
+# ggsave(file="../Plots/fs_tree.svg", plot=p, width=18, height=16, dpi = 1200)
+```
+
+# Look at just the proportions
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- data_logit %>%
+  as.matrix()
+```
+
+## Testing
+```{r}
+X_test <- data_3_logit %>%
+  as.matrix()
+
+```
+
+```{r}
+groups <- generateGroups(tree = tree, nClust = 11, proportions = data_logit,
+                         means = markerMeanCellType, type = "prop")
+```
+
+## Fit Overlap model
+```{r}
+groups <- lapply(groups, sort)
+fit <- fitModel(xTrain = X_train, yTrain = y_train,
+                groups = groups, penalty = "grLasso", seed = 1994)
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, 
+                    title = "Study 3 - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../auc_data/fs_dioscRi_auc_prop_study_3.csv')
+
+```
+## Look at tree plot (Supplementary Figure 2A)
+```{r, fig.height=20, fig.width=40}
+p.prop <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", 
+                   trainingData = X_train, heatmap = FALSE)
+
+pdf(file = "../Plots/Supp_Figure_2_tree_prop_unsupervised.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 12) # The height of the plot in inches
+    p.prop 
+dev.off()
+```
+
+# Look at just the means
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- markerMeanCellType %>%
+  as.matrix()
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+```
+
+## Testing
+```{r}
+X_test <- markerMeanCellType_3 %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+```
+
+```{r}
+groups <- as.list(seq (1,ncol(markerMeanCellType),1)) 
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train,
+                groups = groups, penalty = "grLasso", seed = 1994)
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, 
+                    title = "Study 3 - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../auc_data/fs_dioscRi_auc_means_study_3.csv')
+
+```
+
+
+```{r, fig.height=24, fig.width=40}
+p.means <- plotHeatmap(fit$fit, order = order, type = "MG")
+```
+
+## Visualise marker means heatmap (Supplementary Figure 2B)
+```{r, fig.width=20, fig.height=12, eval=T}
+pdf(file = "../Plots/Supp_Figure_2_tree_means_unsupervised.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 8) # The height of the plot in inches
+    p.means 
+dev.off()
+```
+
+
+```{r}
+all_colors <- c(
+  "#1f77b4",  # Blue
+  "#ff7f0e",  # Orange
+  "#9467bd",  # Purple
+  "#8c564b",  # Brown
+  "#e377c2",  # Pink
+  "#7f7f7f",  # Gray
+  "#bcbd22",  # Olive-yellow
+  "#17becf",  # Cyan
+  "#aec7e8",  # Light blue
+  "#c5b0d5"   # Lavender
+)
+
+my_colors_3 <- c(
+  "dioscRi" = "firebrick",         # soft blue
+  "cyCombine" = all_colors[[6]],        # warm amber/orange
+  "iMUBAC" = all_colors[[7]]  # muted teal (not green-looking)
+)
+```
+
+## Supplementary Figure 2D
+```{r}
+dioscri_mg <- fread('../auc_data/mg_dioscRi_auc_all_study_3.csv')
+cycombine_mg <- fread('../auc_data/mg_cyCombine_auc_all_study_3.csv')
+imubac_mg <- fread('../auc_data/mg_iMUBAC_auc_all_study_3.csv')
+
+dioscri_mg_roc <- roc(dioscri_mg, Truth, Predicted)
+cycombine_mg_roc <- roc(cycombine_mg, Truth, Predicted)
+imubac_mg_roc <- roc(imubac_mg, Truth, Predicted)
+
+p.mg.all.methods <- ggrocs(rocs = list("dioscRi" = dioscri_mg_roc, 
+                                       "cyCombine" = cycombine_mg_roc,
+                                "iMUBAC" = imubac_mg_roc), 
+        data_name = "Normalisation methods prediction performance", 
+        legend_title = "Method", 
+        color_scale = my_colors_3,
+        which_plot = "roc")
+
+pdf(file = "../Plots/Supp_Figure_2_norm_methods_roc.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+    p.mg.all.methods
+dev.off()
+```
+

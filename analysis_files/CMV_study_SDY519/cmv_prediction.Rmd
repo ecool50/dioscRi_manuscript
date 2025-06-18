@@ -1,0 +1,225 @@
+---
+title: "CMV Prediction"
+author: "Elijah WIllie"
+date: "2024-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+files.sources = list.files(path = '../../bioheart_analysis/VaeTOF/VaeTOF/R/', full.names = T)
+sapply(files.sources, source)
+set_random_seed(1994)
+
+setwd('~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/')
+```
+
+```{r}
+split_and_extract <- function(string, n) {
+  split_strings <- strsplit(string, "\\.")[[1]][[2]]  # Split strings by comma
+  return(split_strings)
+}
+```
+
+
+```{r}
+metaData <- read.csv('DeepLearning_metadata.csv')
+metaData <- metaData[, -1]
+
+metaData$sample_id <- lapply(metaData$name, split_and_extract)
+metaData$sample_id <- unlist(metaData$sample_id)
+
+useMarkers <- c("TCRGD", "IGD","HLADR", "CD94","CD85J","CD8","CD56",
+                "CD45RA","CD4","CD38", "CD33", "CD3","CD28","CD27",
+                "CD25","CD24","CD20","CD19","CD161","CD16","CD14","CD127","CCR7")
+```
+
+```{r}
+load("Data/cmv_train_MMD_VAE_sce.RData")
+load("Data/cmv_test_MMD_VAE_sce.RData")
+```
+
+
+## cluster training data
+```{r, eval=F}
+# run FuseSOM clustering
+sce_train$clusters <- NULL
+sce_test$clusters <- NULL
+nclust = 11
+sce_train <- runFuseSOM(sce_train, numClusters = nclust, assay = 'norm',
+                       verbose = F)
+```
+
+# Train clustering model with Caret
+## Select training and testing data
+```{r}
+train_x <- reducedDim(sce_train, type = "VAE") %>%
+  mutate(cellTypes = sce_train$clusters)
+  # mutate(sample_id = sce_train$sample_id) %>%
+  # dplyr::filter(sample_id %in% c("499712","521467")) %>%
+  # dplyr::select(-sample_id)
+
+test_x <- reducedDim(sce_test, type = "VAE")
+```
+
+```{r, eval=T}
+test_clusters <- cellTypeClassifier(train_x, test_x, model = 'lda')
+
+table(test_clusters)
+
+sce_test$clusters <- test_clusters
+```
+
+# Set up clinical data
+## Training
+```{r}
+clinicaldata <- colData(sce_train) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, CMV_Ab) %>%
+  distinct()
+clinicaldata$condition <- factor(if_else(clinicaldata$CMV_Ab == "True", 1, 0))
+```
+
+## Testing
+```{r}
+clinicaldata_test <- colData(sce_test) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, CMV_Ab) %>%
+  distinct()
+clinicaldata_test$condition <- factor(if_else(clinicaldata_test$CMV_Ab == "True", 1, 0))
+```
+
+
+# Compute training features
+## Proportions
+```{r}
+data_logit <- computeFeatures(sce = sce_train, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+row_names <- rownames(data_logit)
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "condition"])
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType <- computeFeatures(sce = sce_train, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+## Compute features on test set
+## Proportions
+```{r}
+data_test_logit <- computeFeatures(sce = sce_test, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+row_names_test <- rownames(data_test_logit)
+condition_test <- factor(clinicaldata_test[match(row_names_test,clinicaldata_test$sample_id),
+                                      "condition"])
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType_test <- computeFeatures(sce = sce_test, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+# Generate grouping structures
+```{r}
+nclust <- length(unique(test_clusters))
+tree <- generateTree(features = data_logit, method = "ward")
+tree <- tree$tree
+groups <- generateGroups(tree = tree, nClust = nclust, 
+                         proportions = data_logit, means = markerMeanCellType)
+
+order <- tree$order
+```
+
+# Process training and testing data
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- cbind(data_logit, markerMeanCellType) 
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+  
+# Extract response variable
+y_train <- as.numeric(levels(condition))[condition]
+```
+
+## Testing
+```{r}
+X_test <- cbind(data_test_logit, markerMeanCellType_test) %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+```
+
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994)
+```
+
+## Predict on test data
+```{r}
+y_test <- as.numeric(levels(condition_test))[condition_test]
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Test set AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          'cmv_dioscRi_aucs.csv')
+```
+
+
+# Visualise Resulting Tree
+```{r, fig.height=10, fig.width=18}
+visualiseModelTree(fit = fit$fit, tree = tree, type = "cluster", 
+                   trainingData = X_train)
+```
+
+## Look at heatmap
+```{r, fig.height=6, fig.width=8,eval=T}
+scater::plotGroupedHeatmap(sce_train, 
+                           features = useMarkers, 
+                           group = "clusters", 
+                           block = "clusters",
+                           exprs_values = "counts", 
+                           center = TRUE, 
+                           scale = TRUE, 
+                           zlim = c(-2,2),
+                           cluster_rows = FALSE)
+```

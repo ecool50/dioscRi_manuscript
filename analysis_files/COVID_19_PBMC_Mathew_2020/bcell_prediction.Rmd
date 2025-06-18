@@ -1,0 +1,261 @@
+---
+title: "B Cell Prediction"
+author: "Elijah WIllie"
+date: "2024-06-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpreg)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+files.sources = list.files(path = '../../../bioheart_analysis/VaeTOF/VaeTOF/R/', full.names = T)
+sapply(files.sources, source)
+source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
+# source('~/Documents/PhD/bioheart_analysis/DeepLasso/scripts/deep_learning_helper_funcs.R')
+set_random_seed(1994)
+
+setwd('~/Documents/PhD/DeepLearning_CyTOF/COVID_19_PBMC_Mathew_2020/')
+```
+
+# Load in data and compute the reference sample
+```{r}
+metadata <- read.csv('../data/Covid_Bcell_metadata.csv')
+metadata$time_days <- factor(metadata$time_days)
+
+# CD45RA, PD-1, CXCR5, TCF-1, CD38, CD95, Eomes, CCR7, KI67, CD16, CD27, 
+# CX3CR1, CD39, CD20, T-bet, and HLA-DR
+useMarkers <- c("CD45RA.BUV395","PD.1.BV421","CXCR5.BB515","TCF.1.AF647", 
+                "CD38.BUV661","CD39.APCFire750","CD95.BV650", "Eomes.PEef610",
+                "CCR7.BB700", "Ki.67.AF700","CD16.BUV615", "CD27.BUV737",
+                "CX3CR1.BB790", "CD20.BUV805", "T.bet.PE.Cy7", "HLA.DR.BV786")
+
+```
+
+# Load normalised data
+```{r}
+load('../data/bcell_down_sampled_train_MMD_VAE_sce.RData')
+load('../data/bcell_down_sampled_test_MMD_VAE_sce.RData')
+```
+
+## cluster training data
+```{r, eval=T}
+# run FuseSOM clustering
+nclust = 11
+sce_norm <- runFuseSOM(sce_norm, numClusters = nclust, assay = 'norm',
+                       verbose = F)
+```
+
+# Train clustering model with Caret
+## Select training and testing data
+```{r}
+train_x <- reducedDim(sce_norm, type = "VAE") %>%
+  mutate(cellTypes = sce_norm$clusters) 
+  # mutate(sample_id = sce_norm$sample_id) %>%
+  # dplyr::filter(sample_id %in% c("994634_d0","994655_d0")) %>%
+  # dplyr::select(-sample_id)
+
+test_x <- reducedDim(sce_norm_test, type = "VAE")
+```
+
+```{r, eval=T}
+test_clusters <- cellTypeClassifier(train_x, test_x, model = 'lda')
+
+table(test_clusters)
+
+sce_norm_test$clusters <- test_clusters
+```
+# Set up clinical data
+## Training
+```{r}
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, condition) %>%
+  distinct()
+clinicaldata$sample_id <- as.character(clinicaldata$sample_id)
+
+clinicaldata$condition <- factor(if_else(clinicaldata$condition == "COVID", 1, 0))
+```
+
+## Testing
+```{r}
+clinicaldata_test <- colData(sce_norm_test) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, condition) %>%
+  distinct()
+clinicaldata_test$sample_id <- as.character(clinicaldata_test$sample_id)
+
+clinicaldata_test$condition <- factor(if_else(clinicaldata_test$condition == "COVID", 1, 0))
+```
+
+
+# Compute training features
+## Proportions
+```{r}
+data_logit <- computeFeatures(sce = sce_norm, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+row_names <- rownames(data_logit)
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "condition"])
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType <- computeFeatures(sce = sce_norm, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+## Compute features on test set
+## Proportions
+```{r}
+data_test_logit <- computeFeatures(sce = sce_norm_test, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+row_names_test <- rownames(data_test_logit)
+condition_test <- factor(clinicaldata_test[match(row_names_test,clinicaldata_test$sample_id),
+                                      "condition"])
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType_test <- computeFeatures(sce = sce_norm_test, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+
+# Generate grouping structures
+```{r}
+nclust <- length(unique(test_clusters))
+tree <- generateTree(features = data_logit, method = "ward")
+tree <- tree$tree
+groups <- generateGroups(tree = tree,nClust = nclust, 
+                         proportions = data_logit, means = markerMeanCellType)
+```
+
+# Process training and testing data
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- cbind(data_logit, markerMeanCellType) 
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+  
+# Extract response variable
+y_train <- as.numeric(levels(condition))[condition]
+```
+
+## Testing
+```{r}
+X_test <- cbind(data_test_logit, markerMeanCellType_test) %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+```
+
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train,
+                groups = groups, penalty = 'grLasso', seed = 1994)
+```
+
+## Predict on test data
+```{r}
+y_test <- as.numeric(levels(condition_test))[condition_test]
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Test set AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../data/Covid_Bcell_dioscRi_aucs.csv')
+```
+
+# Visualise Resulting Tree
+```{r, fig.height=10, fig.width=18}
+visualiseModelTree(fit = fit$fit, tree = tree, type = "cluster", 
+                   trainingData = X_train)
+```
+
+
+# Fit a baseline Lasso model
+```{r}
+set.seed(999)
+cv.lasso <- cv.glmnet(X_train, condition, family='binomial', alpha=1, parallel=TRUE, 
+                      standardize=F, relax = F, type.measure = 'auc',nfolds = 10)
+plot(cv.lasso)
+coef(cv.lasso, s='lambda.min')
+coef <- coef(cv.lasso, s='lambda.min')
+selected_attributes <- (coef@i[-1]+1)
+
+```
+
+```{r}
+pred_test <- predict(cv.lasso, newx = X_test, 
+                     type = "response", s = 'lambda.min')
+
+# write.csv(as.data.frame(pred_test),
+#           '../data/bcell_baseline_aucs.csv')
+
+
+pred_fs <- prediction(pred_test, condition_test)
+perf_fs <- ROCR::performance(pred_fs, "tpr", "fpr")
+
+
+plt_dat = data.frame(
+  FPR = perf_fs@x.values[[1]],
+  TPR = perf_fs@y.values[[1]]
+)
+
+auc_perf <- ROCR::performance(pred_fs, measure = "auc")
+auc <- auc_perf@y.values[[1]]
+
+# generate AUC plot
+p_auc <- ggplot(plt_dat, aes(x = FPR, y = TPR)) +
+  geom_line(colour = "blue") +
+  labs(x = perf_fs@x.name, y = perf_fs@y.name) +
+  geom_abline(slope = 1, intercept = 0) + theme_bw() +
+  theme(
+    plot.title = element_text(color="Black", size=16, face="bold", hjust = 0.5),
+    plot.subtitle = element_text(color = "red", size = 16, hjust = 0.5),
+    axis.title.x = element_text(color="Black", size=16),
+    axis.title.y = element_text(color="Black", size=16),
+    axis.text.y = element_text(size = 16),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 16),
+    strip.text.x = element_text(size = 16),
+    legend.title = element_text(size=16), #change legend title font size
+    legend.text = element_text(size=16) #change legend text font size)
+  )  + ggtitle(paste("Test Set - AUC =", round(auc, 2)))
+
+p_auc
+```

@@ -1,0 +1,540 @@
+---
+title: "Bioheart Prediction Manual Gating"
+author: "Elijah WIllie"
+date: "2024-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(reticulate)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpreg)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+files.sources = list.files(path = '../VaeTOF/VaeTOF/R/', full.names = T)
+sapply(files.sources, source)
+# source('~/Documents/PhD/bioheart_analysis/DeepLasso/scripts/deep_learning_helper_funcs.R')
+set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA-DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c-PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+# Load normalised data
+```{r}
+load('../sce_dat/study_4_MMD_VAE_updated.RData')
+load('../sce_dat/study_3_MMD_VAE_updated.RData')
+```
+
+# Update the markers
+```{r}
+useMarkers <- gsub("_", "-", useMarkers)
+allMarkers <- gsub("_", "-", allMarkers)
+```
+
+
+```{r, fig.height=10, fig.width=16, eval=FALSE}
+sce_norm_sub <- sce_norm[, sce_norm$mg_cell_type_distinct != "other"]
+sce_norm_sub <- sce_norm_sub[, sce_norm_sub$mg_cell_type_distinct != ""]
+ggplotify::as.ggplot(scater::plotGroupedHeatmap(sce_norm_sub, 
+                           features = useMarkers, 
+                           group = "mg_cell_type_distinct", 
+                           block = "mg_cell_type_distinct",
+                           exprs_values = "norm",
+                           center = TRUE, 
+                           scale = TRUE, 
+                           zlim = c(-2,2),
+                           cluster_rows = FALSE)) + 
+  # theme_bw() +
+  # theme_minimal() +
+  ggtitle(label = "Heatmap of normalised manually gated clusters expression") +
+    theme(
+          plot.title = element_text(size = 20, hjust = 0.5, face = "bold")
+    )
+```
+
+# Train clustering model with Caret
+## Select training and testing data
+```{r}
+train_x <- reducedDim(sce_norm, type = "VAE") %>%
+  # t() %>%
+  # as.data.frame() %>%
+  dplyr::mutate(cellTypes = sce_norm$mg_cell_type_distinct)
+  # mutate(sample_id = sce_norm$sample_id) %>%
+  # group_by(clusters) %>%
+  # dplyr::filter(sample_id %in%  c('586', "806")) %>%
+  # dplyr::select(-sample_id)
+
+
+test_x <- reducedDim(sce_3_norm, type = "VAE") %>%
+  # t() %>%
+  as.data.frame()
+```
+
+## Fit SVM model
+```{r, eval=T}
+df_3_clusters <- cellTypeClassifier(trainData = train_x, testData = test_x, model = 'lda')
+
+table(df_3_clusters)
+
+sce_3_norm$mg_clusters <- df_3_clusters
+```
+
+```{r, eval=F}
+save(sce_norm, file = '../../sce_dat/study_4_MMD_VAE_updated.RData')
+save(sce_3_norm, file = '../../sce_dat/study_3_MMD_VAE_updated.RData')
+```
+
+# Setup Clinical information
+## Study 4
+```{r}
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Gender, Age) %>%
+  distinct()
+clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+
+```
+
+## Study 3
+```{r}
+clinicaldata_3 <- colData(sce_3_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
+  distinct()
+# clinicaldata_3$Gensini_bin <- factor(if_else(clinicaldata_3$Gensini > 0, 1, 0))
+encoded_gender_3 <- model.matrix(~Gender-1, data=clinicaldata_3)
+clinicaldata_3 <- cbind(clinicaldata_3, encoded_gender_3)
+clinicaldata_3$Gensini_bin <- as.factor(clinicaldata_3$Gensini_bin)
+```
+
+
+# Compute training features
+## Proportions
+```{r}
+sce_norm <- sce_norm[, sce_norm$mg_cell_type_distinct != "other"]
+sce_norm <- sce_norm[, sce_norm$mg_cell_type_distinct != ""]
+# sce_norm$mg_cell_type_distinct <- droplevels(sce_norm$mg_cell_type_distinct)
+data_logit <- computeFeatures(sce = sce_norm, featureType = 'prop', 
+                              cellTypeCol = 'mg_cell_type_distinct', 
+                              sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+row_names <- rownames(data_logit)
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Gensini_bin"])
+
+data <- computeFeatures(sce = sce_norm, featureType = 'prop', 
+                              cellTypeCol = 'mg_cell_type_distinct', sampleCol = 'sample_id', 
+                              logit = F, useMarkers = useMarkers)
+Age <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Age"])
+GenderM <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      c("GenderM")])
+
+clinicaldata_info <- cbind(Age, GenderM)
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType <- computeFeatures(sce = sce_norm, featureType = 'mean', assay = "norm",
+                              cellTypeCol = 'mg_cell_type_distinct', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+# markerMeanCellType_rsc <- computeFeatures(sce = sce_norm, featureType = 'mean', assay = 'norm_rescaled',
+#                               cellTypeCol = 'mg_cell_type_distinct', sampleCol = 'sample_id', 
+#                               logit = T, useMarkers = useMarkers)
+```
+
+
+## Compute features on study 3
+
+## Proportions
+```{r}
+sce_3_norm <- sce_3_norm[, sce_3_norm$mg_clusters != "other"]
+sce_3_norm <- sce_3_norm[, sce_3_norm$mg_clusters != ""]
+sce_3_norm$mg_clusters <- droplevels(sce_3_norm$mg_clusters)
+
+data_3_logit <- computeFeatures(sce = sce_3_norm, featureType = 'prop', 
+                              cellTypeCol = 'mg_clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+row_names_3 <- rownames(data_3_logit)
+condition_3 <- factor(clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      "Gensini_bin"])
+
+Age <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      "Age"]
+GenderM <- clinicaldata_3[match(row_names_3,clinicaldata_3$sample_id),
+                                      c("GenderM")]
+
+clinicaldata_info_3 <- cbind(Age, GenderM)
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType_3 <- computeFeatures(sce = sce_3_norm, featureType = 'mean',  assay = "norm",
+                              cellTypeCol = 'mg_clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+# Generate Tree
+```{r, eval=T}
+root <- Node$new("Root")
+  myeloid <- root$AddChild('Myeloid_logit')
+    `14+ monos` <- myeloid$AddChild('14+ monos_logit')
+    `16+ monos` <- myeloid$AddChild('16+ monos_logit') 
+    pDCs <- myeloid$AddChild('pDCs_logit')
+    `CD141+ DCs` <- myeloid$AddChild('CD141+ DCs_logit')
+    `CD1c+ DCs` <- myeloid$AddChild('CD1c+ DCs_logit')
+  NK <- root$AddChild('NK_logit')
+  `B cells` <- root$AddChild('B cells_logit')
+  CD3 <- root$AddChild('CD3_logit')
+    CD8hi <- CD3$AddChild('CD8hi_logit')
+    CD8lo <- CD3$AddChild('CD8lo_logit')
+    CD4 <- CD3$AddChild('CD4_logit')
+      `CD4+ Tconv` <- CD4$AddChild('CD4+ Tconv_logit')
+      `CD4+ Treg` <- CD4$AddChild('CD4+ Treg_logit')
+  # other <- root$AddChild('other_logit')
+```
+
+# Generate grouping structures
+```{r}
+nclust <- ncol(data_logit)
+# root <- as.phylo(root)
+order <- as.phylo(root)$tip.label
+tree <- treekoR:::findChildren(ggtree(as.phylo(root),
+                                            ladderize = F, layout = 'dendrogram'))
+
+groups <- generateGroups(tree = tree, nClust = nclust, 
+                         proportions = data_logit, means = markerMeanCellType)
+```
+
+# Add the clinical data in
+```{r, eval=F}
+groups[[length(groups) + 1]] <- 309:310
+```
+
+# Process training and testing data
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- cbind(data_logit, markerMeanCellType) 
+  
+  # Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+# X_train <- cbind(X_train, clinicaldata_info)
+# Extract response variable
+y_train <- as.numeric(levels(condition))[condition]
+```
+
+## Testing
+```{r}
+X_test <- cbind(data_3_logit, markerMeanCellType_3) %>%
+  as.matrix()
+# colnames(X_test_study_3) <- janitor::make_clean_names(colnames(X_test_study_3))
+X_test <- predict(scaleVals, X_test)
+# X_test <- cbind(X_test, clinicaldata_info_3)
+y_test <- as.numeric(levels(condition_3))[condition_3]
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994, alpha = NULL)
+```
+
+## Predict on the training data
+```{r}
+train_auc <- plotAUC(fit = fit$fit, xTest = X_train, yTest = y_train, title = "Study 4 MG - All AUC =")
+train_auc$plot
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 MG - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../dioscRi_manuscript/auc_data/mg_dioscRi_auc_all_study_3.csv')
+
+```
+
+
+
+# Visualise Resulting Tree
+```{r, fig.height=20, fig.width=40}
+# tiff("../Plots/test.png", units="in", width=16, height=10, res=300)
+p.all <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", trainingData = X_train,
+                   nodesToRemove =  c("Root", "Myeloid", "CD3", "CD4"), title = "Proportions + Marker Means")
+
+pdf(file = "../dioscRi_manuscript/Plots/Figure_3_tree_full_manual_gating.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+    p.all 
+dev.off()
+# dev.off()
+# ggsave(file="../Plots/mg_tree.svg", plot=p, width=18, height=16, dpi = 1200)
+```
+
+```{r, eval=T, fig.height=10, fig.width=16, eval=FALSE}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_mean <- getSigFeatures(fit$fit, type = 'mean',  
+                         mean = markerMeanCellType, clinicalData = clinicaldata, 
+                         outcome = "Gensini_bin")
+
+sigFeatures <- stats_mean$sigFeatures
+# stats <- stats_mean$stats[stats_mean$stats$p < 0.05, ]
+
+
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin")
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin", type = "boxplots")
+```
+
+```{r, eval=T, fig.height=10, fig.width=16, eval=FALSE}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_prop <- getSigFeatures(fit$fit, type = 'prop',  prop = data,
+                         mean = markerMeanCellType, clinicalData = clinicaldata, 
+                         outcome = "Gensini_bin")
+
+sigFeatures <- stats_prop$sigFeatures
+stats <- stats_prop$stats
+
+
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin")
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin", type = "boxplots")
+```
+
+# Look at just the proportions
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- data_logit
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+```
+
+## Testing
+```{r}
+X_test<- data_3_logit %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+```
+
+```{r}
+groups <- generateGroups(tree = tree, nClust = nclust, proportions = data_logit,
+                         means = markerMeanCellType, type = "prop")
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994)
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 MG - All AUC =")
+test_auc$plot
+# 
+write.csv(test_auc$preds,
+          '../auc_data/mg_dioscRi_auc_prop_study_3.csv')
+
+```
+
+## Look at tree plot
+```{r, fig.height=15, fig.width=40}
+p.prop <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", trainingData = X_train,
+                   nodesToRemove =  c("Root", "Myeloid", "CD3", "CD4"), heatmap = FALSE)
+
+pdf(file = "../dioscRi_manuscript/Plots/Figure_3_tree_prop_manual_gating.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 10) # The height of the plot in inches
+    p.prop 
+dev.off()
+```
+
+```{r, eval=T, fig.height=10, fig.width=16, eval=FALSE}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_prop <- getSigFeatures(fit$fit, type = 'prop',  prop = data,
+                         mean = markerMeanCellType, clinicalData = clinicaldata, 
+                         outcome = "Gensini_bin")
+
+sigFeatures <- stats_prop$sigFeatures
+stats <- stats_prop$stats
+
+
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin")
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin", type = "boxplots")
+```
+
+# Look at just the means
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- markerMeanCellType
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+```
+
+## Testing
+```{r}
+X_test <- markerMeanCellType_3 %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+```
+
+```{r}
+groups <- as.list(seq (1,ncol(markerMeanCellType),1)) 
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994)
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 MG - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../auc_data/mg_dioscRi_auc_means_study_3.csv')
+
+
+
+```
+
+
+```{r, fig.height=15, fig.width=40}
+order <- gsub("_logit", "", order)
+order <- gsub("_", " ", order)
+p.means <- plotHeatmap(fit$fit, type = "MG", order = order)
+
+pdf(file = "../dioscRi_manuscript/Plots/Figure_3_tree_means_manual_gating.pdf",   # The directory you want to save the file in
+    width = 12, # The width of the plot in inches
+    height = 8) # The height of the plot in inches
+    p.means 
+dev.off()
+```
+
+```{r, eval=T, fig.height=14, fig.width=20, eval=FALSE}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_mean <- getSigFeatures(fit$fit, type = 'mean',  
+                         mean = markerMeanCellType, clinicalData = clinicaldata, 
+                         outcome = "Gensini_bin")
+
+sigFeatures <- stats_mean$sigFeatures
+stats <- stats_mean$stats
+
+
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin")
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin", type = "boxplots")
+```
+
+```{r, fig.width=18, fig.height=12}
+pdf(file = "../Plots/feature_trees_mg.pdf",   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 12) # The height of the plot in inches
+p.prop_mean <- cowplot::plot_grid(p.prop, p.means, nrow = 2, 
+                                  labels = LETTERS[1:2], align = "hv")
+cowplot::plot_grid(p.prop_mean, p.all, ncol = 2, labels = c("", "C"))
+dev.off()
+```
+
+
+```{r, eval=T, fig.height=16, fig.width=20,eval=F}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_mean <- getSigFeatures(fit$fit, type = 'mean',  
+                         mean = markerMeanCellType, clinicalData = clinicaldata, 
+                         outcome = "Gensini_bin")
+
+sigFeatures <- stats_mean$sigFeatures
+# stats <- stats_mean$stats[stats_mean$stats$p < 0.05, ]
+
+
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin")
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin", type = "boxplots")
+```
+
+## Study 3
+```{r, eval=T, fig.height=10, fig.width=16, eval=FALSE}
+# CCR2 (OR 1.12), CCR4 (OR 1.08), CD38 and CD45RO (OR 1.13), HLA-DR (OR 1.06), and Ki67 (1.22)
+stats_mean_3 <- getSigFeatures(fit$fit, type = 'mean',  
+                         mean = markerMeanCellType_3, clinicalData = clinicaldata_3, 
+                         outcome = "Gensini_bin")
+
+sigFeatures_3 <- stats_mean_3$sigFeatures
+stats_3 <- stats_mean$stats[stats_mean_3$stats$p.adj < 0.05, ]
+
+
+
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin")
+```

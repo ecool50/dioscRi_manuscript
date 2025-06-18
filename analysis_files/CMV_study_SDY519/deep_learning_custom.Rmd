@@ -1,0 +1,317 @@
+---
+title: "Deep Learning custom"
+author: "Elijah WIllie"
+date: "2023-07-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(scales)
+  library(ggnewscale)
+  library(rstatix)
+  library(ggpubr)
+})
+files.sources = list.files(path = '../../bioheart_analysis/VaeTOF/VaeTOF/R/', full.names = T)
+sapply(files.sources, source)
+set_random_seed(1994)
+setwd('~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/')
+```
+
+```{r}
+split_and_extract <- function(string, n) {
+  split_strings <- strsplit(string, "\\.")[[1]][[2]]  # Split strings by comma
+  return(split_strings)
+}
+```
+
+
+```{r}
+# read in the data and metadata
+dat_full <- data.table::fread('DeepLearning_data.csv', verbose = T, nThread = 7)
+metaData <- read.csv('DeepLearning_metadata.csv')
+metaData <- metaData[, -1]
+
+metaData$sample_id <- lapply(metaData$name, split_and_extract)
+metaData$sample_id <- unlist(metaData$sample_id)
+
+# merge the metadata with the full data
+dat_full <- left_join(metaData, dat_full)
+
+useMarkers <- dat_full %>%
+  dplyr::select(-c('name', 'study_accession', 'CMV_Ab', 'sample_id', 
+            'V1', 'VIABILITY', 'DNA2', 'DNA1', 'CELL_LENGTH')) %>%
+  colnames()
+# dat_full[, useMarkers] <- cyCombine::transform_asinh(dat_full[, useMarkers],
+#                                                      cofactor = 5)
+```
+
+# split into training and testing set
+```{r}
+# validation = 'SDY515'
+# testing = 'SDY519'
+train <- dat_full[-which(dat_full$study_accession %in% c('SDY519', 'SDY515')), ]
+test <- dat_full[which(dat_full$study_accession == 'SDY519'), ]
+```
+
+```{r}
+preProcValues <- preProcess(train[, useMarkers], method = c("range"))
+train[, useMarkers] <- predict(preProcValues, train[, useMarkers])
+test[, useMarkers] <- predict(preProcValues, test[, useMarkers])
+```
+
+# train on train data
+## get the reference sample
+```{r}
+res_ind <- computeReferenceSample(data = train, markers = useMarkers, N = 2)
+```
+
+```{r}
+train_dat <- train[which(train$sample_id %in% res_ind$topNSamples), ]
+val_dat <- train[which(train$sample_id %in% c(res_ind$bottomNSamples)), ]
+encoding_dim <- FuseSOM::computeGridSize(train_dat[, useMarkers]) %>%
+  as.integer()
+```
+
+```{r, eval=FALSE}
+cov_mat <- Rfast::cova(train_dat[, useMarkers] %>% as.matrix())
+ED = estimate.ED(x = cov_mat, length(unique(train_dat)), cov.mat = T, round.digits = 0)
+```
+
+```{r}
+# models <- autoEncoderModel(train_dat = train_dat[, useMarkers], input_size = length(useMarkers),
+#                            encoding_dim = encoding_dim*2, l2_reg = 0, 
+#                            dropout_rate = 0.2) 
+batch_size = 32L
+vae_model <- trainVAEModel(trainData = train_dat[, useMarkers], 
+                             valData = val_dat, 
+                             batchSize = batch_size, lambda = 0.1,
+                             useMarkers = useMarkers, epochs = 100)
+```
+
+
+# Predict on training data
+```{r}
+# train_norm <- predict(models$autoencoder_model, as.matrix(train[, useMarkers])) %>%
+#   as.data.frame()
+# colnames(train_norm) <- useMarkers
+
+train_decoded <- decodeSamples(newSamples = as.matrix(train[, useMarkers]), 
+                                vae = vae_model$vae)
+train_norm <- train_decoded[[1]]
+
+
+
+colnames(train_norm) <- useMarkers
+```
+
+# Predict on test data
+```{r}
+# test_norm <- predict(models$autoencoder_model, as.matrix(test[, useMarkers])) %>%
+#   as.data.frame()
+# colnames(test_norm) <- useMarkers
+
+test_decoded <- decodeSamples(newSamples = as.matrix(test[, useMarkers]), 
+                               vae = vae_model$vae,
+                               batchSize = batch_size)
+test_norm <- test_decoded[[1]]
+
+test_encoded <- test_decoded$encoded %>%
+  as.matrix() %>%
+  as.data.frame()
+
+colnames(test_norm) <- useMarkers
+```
+
+## create sce object for training data
+```{r}
+sce_train <- SingleCellExperiment(assays = list(norm = t(train_norm[, useMarkers]),
+                                                raw = t(train[, useMarkers])
+),
+colData = train[, 1:4])
+
+reducedDims(sce_train) <- list(VAE=train_decoded$encoded %>% 
+                                 as.matrix() %>%
+                                 as.data.frame())
+# sce_train_norm$sample_id <- t
+```
+
+```{r}
+sce_test <- SingleCellExperiment(assays = list(norm = t(test_norm[, useMarkers]),
+                                               raw = t(test[, useMarkers])
+),
+colData = test[, 1:4])
+reducedDims(sce_test) <- list(VAE=test_decoded$encoded %>% 
+                                 as.matrix() %>%
+                                 as.data.frame())
+```
+
+## cluster training data
+```{r}
+# run FuseSOM clustering
+nclust <- 11
+sce_train <- runFuseSOM(sce_train, numClusters = nclust, assay = 'norm',
+                       verbose = F)
+```
+
+# Train clustering model with Caret
+## Select training and testing data
+```{r}
+train_x <- reducedDim(sce_train, type = "VAE") %>%
+  mutate(cellTypes = sce_train$clusters)
+  # mutate(sample_id = sce_train$sample_id) %>%
+  # dplyr::filter(sample_id %in% c("499712","521467")) %>%
+  # dplyr::select(-sample_id)
+
+test_x <- reducedDim(sce_test, type = "VAE")
+```
+
+```{r, eval=T}
+test_clusters <- cellTypeClassifier(train_x, test_x, model = 'lda')
+
+table(test_clusters)
+
+sce_test$clusters <- test_clusters
+```
+
+# Set up clinical data
+## Training
+```{r}
+clinicaldata <- colData(sce_train) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, CMV_Ab) %>%
+  distinct()
+clinicaldata$condition <- factor(if_else(clinicaldata$CMV_Ab == "True", 1, 0))
+```
+
+## Testing
+```{r}
+clinicaldata_test <- colData(sce_test) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, CMV_Ab) %>%
+  distinct()
+clinicaldata_test$condition <- factor(if_else(clinicaldata_test$CMV_Ab == "True", 1, 0))
+```
+
+
+# Compute training features
+## Proportions
+```{r}
+data_logit <- computeFeatures(sce = sce_train, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+row_names <- rownames(data_logit)
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "condition"])
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType <- computeFeatures(sce = sce_train, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+## Compute features on test set
+## Proportions
+```{r}
+data_test_logit <- computeFeatures(sce = sce_test, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+row_names_test <- rownames(data_test_logit)
+condition_test <- factor(clinicaldata_test[match(row_names_test,clinicaldata_test$sample_id),
+                                      "condition"])
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType_test <- computeFeatures(sce = sce_test, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+```
+
+# Generate grouping structures
+```{r}
+nclust <- length(unique(test_clusters))
+tree <- generateTree(features = data_logit, method = "ward")
+tree <- tree$tree
+groups <- generateGroups(tree = tree, nClust = nclust, 
+                         proportions = data_logit, means = markerMeanCellType)
+
+order <- tree$order
+```
+
+# Process training and testing data
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- cbind(data_logit, markerMeanCellType) 
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+  
+# Extract response variable
+y_train <- as.numeric(levels(condition))[condition]
+```
+
+## Testing
+```{r}
+X_test <- cbind(data_test_logit, markerMeanCellType_test) %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+```
+
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994)
+```
+
+## Predict on test data
+```{r}
+y_test <- as.numeric(levels(condition_test))[condition_test]
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Test set AUC =")
+test_auc$plot
+
+# write.csv(test_auc$preds,
+#           'cmv_glasso_aucs.csv')
+```
+
+
+# Plot overlap tree
+```{r}
+visualiseModelTree(fit = fit$fit, tree = tree, type = "cluster",  
+                   trainingData = X_train)
+```
+
+# Save SCE objects
+```{r, eval=T}
+save(sce_train, file = "Data/cmv_train_MMD_VAE_sce.RData")
+save(sce_test, file = "Data/cmv_test_MMD_VAE_sce.RData")
+```

@@ -1,0 +1,158 @@
+---
+title: "Code to generate various parts of Figure 3"
+author: "Elijah Willie"
+date: "2025-06-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(ROCR)
+  library(pROC)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+  library(dioscRi)
+})
+source('../scripts/normalisation_plotting.R')
+set_random_seed(1994)
+```
+
+```{r}
+all_colors <- c(
+  "#1f77b4",  # Blue
+  "#ff7f0e",  # Orange
+  "#9467bd",  # Purple
+  "#8c564b",  # Brown
+  "#e377c2",  # Pink
+  "#7f7f7f",  # Gray
+  "#bcbd22",  # Olive-yellow
+  "#17becf",  # Cyan
+  "#aec7e8",  # Light blue
+  "#c5b0d5"   # Lavender
+)
+
+my_colors_1 <- c(
+  "dioscRi" = "firebrick",         # soft blue
+  "Deep CNN" = "forestgreen",        # warm amber/orange
+  "Cell CNN" = "darkorange"  # muted teal (not green-looking)
+)
+```
+
+# BioHEART (Figure 4A)
+```{r, fig.width=12, fig.height=10}
+dl_bioheart <- fread('../auc_data/fs_dioscRi_auc_all_study_3.csv')
+dcytof_bioheart <- fread('../auc_data/bioheart_deep_cytof_aucs.csv')
+cnn_bioheart <- fread('../auc_data/bioheart_cell_cnn_aucs.csv')
+
+dl_bioheart_roc <- roc(dl_bioheart, Truth, Predicted)
+dcytof_bioheart_roc <- roc(dcytof_bioheart, truth, pred)
+cnn_bioheart_roc <- roc(cnn_bioheart, truth, pred)
+
+p.bh <- ggrocs(rocs = list("dioscRi" = dl_bioheart_roc, 
+                   "Deep CNN" = dcytof_bioheart_roc, 
+                   "Cell CNN" = cnn_bioheart_roc), 
+        data_name = "BioHEART-CT Validation", 
+        legend_title = "Method",
+        color_scale = my_colors_1,
+        which_plot = "roc")
+
+pdf(file = "../Plots/Figure_4_bio_heart_roc.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+    p.bh
+dev.off()
+```
+
+# B Cell Mathew et al COVID-19 (Figure 4B)
+```{r, fig.width=12, fig.height=10}
+dl_bcell <- fread('../auc_data/Covid_Bcell_dioscRi_aucs.csv')
+dcytof_bcell <- fread('../auc_data/bcell_deep_cytof_aucs.csv')
+cnn_bcell <- fread('../auc_data/bcell_cell_cnn_aucs.csv')
+
+dl_bcell_roc <- roc(dl_bcell, Truth, Predicted)
+dcytof_bcell_roc <- roc(dcytof_bcell, truth, pred)
+cnn_bcell_roc <- roc(cnn_bcell, truth, pred)
+
+p.bcell <- ggrocs(rocs = list("dioscRi" = dl_bcell_roc, 
+                              "Deep CNN" = dcytof_bcell_roc, 
+                              "Cell CNN" = cnn_bcell_roc), 
+        data_name = "Matthew et al - COVID-19", 
+        legend_title = "Method", 
+        color_scale = my_colors_1, 
+        which_plot = "roc")
+
+pdf(file = "../Plots/Figure_4_b_cell_roc.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+    which_plot = "roc"
+dev.off()
+
+
+```
+
+# Wagner et al Breast Cancer (Figure 4C)
+```{r, fig.width=12, fig.height=10}
+dl_bc <- fread('../auc_data/breast_cancer_dioscRi_aucs.csv')
+dcytof_bc<- fread('../auc_data/breast_cancer_deep_cytof_aucs.csv')
+cnn_bc <-fread('../auc_data/breast_cancer_cell_cnn_aucs.csv')
+
+dl_bc_roc <- roc(dl_bc, Truth, Predicted)
+dcytof_bc_roc <- roc(dcytof_bc, truth, pred)
+cnn_bc_roc <- roc(cnn_bc, truth, pred)
+
+p.bc <- ggrocs(rocs = list("dioscRi" = dl_bc_roc, 
+                           "Deep CNN" = dcytof_bc_roc, 
+                           "Cell CNN" = cnn_bc_roc), 
+        data_name = "Wagner et al - Breast Cancer", 
+        legend_title = "Method", 
+        color_scale = my_colors_1, 
+        which_plot = "roc")
+
+pdf(file = "../Plots/Figure_4_breast_cancer_roc.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+    p.bc
+dev.off()
+```
+
+# CMV Study SDY519 (Figure 4D)
+```{r, fig.width=12, fig.height=10}
+dl_cmv <- fread('../auc_data//cmv_dioscRi_aucs.csv')
+dcytof_cmv <- fread('../auc_data//cmv_deep_cytof_aucs.csv')
+cnn_cmv <-fread('../auc_data//cmv_cell_cnn_aucs.csv')
+
+dl_cmv_roc <- roc(dl_cmv, Truth, Predicted)
+ddcytof_cmv_roc <- roc(dcytof_cmv, truth, pred)
+cnn_cmv_roc <- roc(cnn_cmv, truth, pred)
+
+p.cmv <- ggrocs(rocs = list("dioscRi" = dl_cmv_roc, 
+                            "Deep CNN" = ddcytof_cmv_roc, 
+                            "Cell CNN" = cnn_cmv_roc), 
+        data_name = "CMV - Study SDY519", 
+        legend_title = "Method", color_scale = my_colors_1, 
+        which_plot = "roc")
+
+pdf(file = "../Plots/Figure_4_CMV_roc.pdf",   # The directory you want to save the file in
+    width = 6, # The width of the plot in inches
+    height = 6) # The height of the plot in inches
+    p.cmv
+dev.off()
+```
+

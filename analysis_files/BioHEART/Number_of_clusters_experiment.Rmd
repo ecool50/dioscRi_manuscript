@@ -1,0 +1,215 @@
+---
+title: "Number of clusters experiment"
+author: "Elijah WIllie"
+date: "2024-10-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpreg)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+files.sources = list.files(path = '../../VaeTOF/VaeTOF/R/', full.names = T)
+sapply(files.sources, source)
+source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
+# source('~/Documents/PhD/bioheart_analysis/DeepLasso/scripts/deep_learning_helper_funcs.R')
+set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+# Update the markers
+```{r}
+useMarkers <- gsub("_", "-", useMarkers)
+allMarkers <- gsub("_", "-", allMarkers)
+```
+
+
+# Load normalised data
+```{r}
+load('../../sce_dat/study_4_MMD_VAE_updated.RData')
+load('../../sce_dat/study_3_MMD_VAE_updated.RData')
+```
+
+
+# training clinal data
+```{r}
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini, Gender, Age) %>%
+  distinct()
+clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+```
+
+# testing clinical data
+```{r}
+clinicaldata_3 <- colData(sce_3_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
+  distinct()
+
+encoded_gender_3 <- model.matrix(~Gender-1, data=clinicaldata_3)
+clinicaldata_3 <- cbind(clinicaldata_3, encoded_gender_3)
+clinicaldata_3$Gensini_bin <- as.factor(clinicaldata_3$Gensini_bin)
+```
+
+# Create functions to run the prediction models
+```{r}
+runPredictionModel <- function(sce_train, sce_test, numClusters,
+                               clinical_data_train, clinical_data_test){
+  # cluster data into k clusters
+  sce_train <- runFuseSOM(sce_train, numClusters = numClusters, assay = 'norm',
+                       verbose = FALSE, clusterCol = 'clusters')
+  
+  # get training and testing data
+  train_x <- reducedDim(sce_train, type = "VAE") %>%
+  mutate(cellTypes = as.factor(sce_train$clusters))
+  test_x <- reducedDim(sce_test, type = "VAE")
+  
+  # fit cell type classifier
+  test_cluster <- cellTypeClassifier(train_x, test_x, model = 'lda')
+  sce_test$clusters <- as.factor(test_cluster)
+  
+  # Compute training features
+  data_logit_train <- computeFeatures(sce = sce_train, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  row_names_train <- rownames(data_logit_train)
+  condition_train <- factor(clinical_data_train[match(row_names_train,clinical_data_train$sample_id),
+                                      "Gensini_bin"])
+  colnames(data_logit_train) <- as.factor(colnames(data_logit_train))
+  markerMeanCellType_train <- computeFeatures(sce = sce_train, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  colnames(markerMeanCellType_train) <- as.factor(colnames(markerMeanCellType_train))
+  
+  # compute testing features
+   data_logit_test <- computeFeatures(sce = sce_test, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  row_names_test <- rownames(data_logit_test)
+  condition_test <- factor(clinical_data_test[match(row_names_test,clinical_data_test$sample_id),
+                                      "Gensini_bin"])
+  colnames(data_logit_test) <- as.factor(colnames(data_logit_test))
+  markerMeanCellType_test <- computeFeatures(sce = sce_test, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  colnames(markerMeanCellType_test) <- as.factor(colnames(markerMeanCellType_test))
+  
+  
+  # generate tree
+  trees <- generateTree(features = data_logit_train, method = "ward")
+  tree <- trees$tree
+  order <- trees$order
+  groups <- generateGroups(tree = tree, nClust = numClusters, 
+                         proportions = data_logit_train, 
+                         means = markerMeanCellType_train)
+  
+  # Combine the feature matrices
+  X_train <- cbind(data_logit_train, markerMeanCellType_train) 
+    
+  # Scale the combined data
+  scaleVals <- preProcess(X_train, method = c('scale'))
+  X_train <- predict(scaleVals, X_train) %>%
+      as.matrix()
+    
+  # Extract response variable
+  y_train <- as.numeric(levels(condition_train))[condition_train]
+  # combine feature matrices for the test data
+  X_test <- cbind(data_logit_test, markerMeanCellType_test) %>%
+  as.matrix()
+  X_test <- predict(scaleVals, X_test)
+  y_test <- as.numeric(levels(condition_test))[condition_test]
+  
+  # Fit the overlap group lasso model
+  groups <- lapply(groups, sort)
+  fit <- fitModel(xTrain = X_train, yTrain = y_train, modelSummary = F,
+                groups = groups, penalty = "grLasso", seed = 1994)
+  
+  test_auc <- plotAUC(fit = fit$fit, xTest = X_test, 
+                      yTest = y_test, title = "")
+  return(test_auc)
+}
+```
+
+```{r}
+clusters <- seq(6,16)
+AUCs <- c()
+
+for(i in 1:length(clusters)){
+  numClusters <- clusters[i]
+  res <- runPredictionModel(sce_train = sce_norm, sce_test = sce_3_norm, numClusters = numClusters, 
+                          clinical_data_train = clinicaldata, clinical_data_test = clinicaldata_3)
+  
+  res$plot
+  AUCs[i] <- auc(res$preds$Truth, res$preds$Predicted) %>% round(2)
+}
+
+```
+
+# Generate line plot of results
+```{r}
+res_df <- data.frame(Cluster = clusters,
+                     AUC = AUCs, Dataset = rep("BioHEART-CT", 11))
+
+write.csv(res_df,
+          '../auc_data/fs_dioscRi_auc_all_study_multi_cluster.csv')
+```
+
+
+```{r}
+ggplot(data=res_df, aes(x=Cluster, y=AUC)) +
+  geom_line()+
+  geom_point()
+```
+

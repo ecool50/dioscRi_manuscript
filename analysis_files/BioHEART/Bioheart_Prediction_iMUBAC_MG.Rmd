@@ -1,0 +1,379 @@
+---
+title: "BioHEART Prediction iMUBAC"
+author: "Elijah Willie"
+date: "2024-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpreg)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+files.sources = list.files(path = '..//VaeTOF/VaeTOF/R/', full.names = T)
+sapply(files.sources, source)
+source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
+set_random_seed(1994)
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+# Update the markers
+```{r}
+useMarkers <- gsub("_", "-", useMarkers)
+allMarkers <- gsub("_", "-", allMarkers)
+```
+
+# Load the imubac normalised data
+```{r}
+load('../sce_dat/bioheart_iMUBAC_batch_corrected.RData')
+```
+
+## Subset the data
+```{r, eval=T}
+sce_imubac_disc <- sce_imubac[, sce_imubac$batch == "4"]
+
+
+sce_imubac_val <- sce_imubac[, sce_imubac$batch == "3"]
+
+```
+
+## Use FuseSOM to cluster the normalised data
+```{r, eval=F}
+# run FuseSOM clustering
+nclust = 11
+sce_imubac_disc$clusters_norm <- NULL
+sce_imubac_disc <- runFuseSOM(sce_imubac_disc, numClusters = nclust, 
+                                 assay = 'normexprs',
+                       verbose = FALSE, clusterCol = 'clusters_norm')
+```
+
+# Train clustering model with Caret
+## Select training and testing data
+```{r}
+train_x <- assay(sce_imubac_disc, "normexprs") %>%
+    t() %>%
+    as.data.frame() %>%
+  mutate(cellTypes = as.factor(sce_imubac_disc$CellType))
+
+test_x <- assay(sce_imubac_val, "normexprs") %>%
+    t() %>%
+    as.data.frame()
+```
+
+```{r, eval=T}
+val_clusters <- cellTypeClassifier(trainData = train_x, testData = test_x, model = 'lda')
+
+table(val_clusters)
+
+sce_imubac_val$mg_clusters <- as.factor(val_clusters)
+```
+
+# Compute training features
+## Proportions
+```{r}
+clinicaldata <- colData(sce_imubac_disc) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
+  distinct()
+
+encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
+clinicaldata <- cbind(clinicaldata, encoded_gender)
+
+```
+
+## Generate features
+### Proportions
+```{r}
+clinicaldata_val <- colData(sce_imubac_val) %>%
+  as.data.frame() %>%
+  dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
+  distinct()
+
+encoded_gender_val <- model.matrix(~Gender-1, data=clinicaldata_val)
+clinicaldata_val <- cbind(clinicaldata_val, encoded_gender_val)
+clinicaldata_val$Gensini_bin <- as.factor(clinicaldata_val$Gensini_bin)
+```
+
+# Compute training features
+## Proportions
+```{r}
+sce_imubac_disc <- sce_imubac_disc[, sce_imubac_disc$CellType != "other"]
+sce_imubac_disc <- sce_imubac_disc[, sce_imubac_disc$CellType != ""]
+
+data_logit <- computeFeatures(sce = sce_imubac_disc, featureType = 'prop', 
+                              cellTypeCol = 'CellType', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+row_names <- rownames(data_logit)
+condition <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Gensini_bin"])
+
+Age <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      "Age"])
+GenderM <- factor(clinicaldata[match(row_names,clinicaldata$sample_id),
+                                      c("GenderM")])
+
+clinicaldata_info <- cbind(Age, GenderM)
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType <- computeFeatures(sce = sce_imubac_disc, featureType = 'mean', 
+                              cellTypeCol = 'CellType', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers, assay = "normexprs")
+colnames(markerMeanCellType) <- as.factor(colnames(markerMeanCellType))
+```
+
+
+## Compute features on study 3
+## Proportions
+```{r}
+sce_imubac_val <- sce_imubac_val[, sce_imubac_val$mg_clusters != "other"]
+sce_imubac_val <- sce_imubac_val[, sce_imubac_val$mg_clusters != ""]
+sce_imubac_val$mg_clusters <- droplevels(sce_imubac_val$mg_clusters)
+
+data_val_logit <- computeFeatures(sce = sce_imubac_val, featureType = 'prop', 
+                              cellTypeCol = 'mg_clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+
+row_names_val <- rownames(data_val_logit)
+condition_val <- factor(clinicaldata_val[match(row_names_val,clinicaldata_val$sample_id),
+                                      "Gensini_bin"])
+colnames(data_val_logit) <- as.factor(colnames(data_val_logit))
+
+Age <- clinicaldata_val[match(row_names_val,clinicaldata_val$sample_id),
+                                      "Age"]
+GenderM <- clinicaldata_val[match(row_names_val,clinicaldata_val$sample_id),
+                                      c("GenderM")]
+
+clinicaldata_info_val <- cbind(Age, GenderM)
+```
+
+## Means
+```{r, eval=T}
+markerMeanCellType_val <- computeFeatures(sce = sce_imubac_val, featureType = 'mean', 
+                              cellTypeCol = 'mg_clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers, assay = "normexprs")
+```
+
+
+# Generate Tree
+```{r, eval=T}
+root <- Node$new("Root")
+  myeloid <- root$AddChild('Myeloid_logit')
+    `14+ monos` <- myeloid$AddChild('14+ monos_logit')
+    `16+ monos` <- myeloid$AddChild('16+ monos_logit') 
+    pDCs <- myeloid$AddChild('pDCs_logit')
+    `CD141+ DCs` <- myeloid$AddChild('CD141+ DCs_logit')
+    `CD1c+ DCs` <- myeloid$AddChild('CD1c+ DCs_logit')
+  NK <- root$AddChild('NK_logit')
+  `B cells` <- root$AddChild('B cells_logit')
+  CD3 <- root$AddChild('CD3_logit')
+    CD8hi <- CD3$AddChild('CD8hi_logit')
+    CD8lo <- CD3$AddChild('CD8lo_logit')
+    CD4 <- CD3$AddChild('CD4_logit')
+      `CD4+ Tconv` <- CD4$AddChild('CD4+ Tconv_logit')
+      `CD4+ Treg` <- CD4$AddChild('CD4+ Treg_logit')
+  # other <- root$AddChild('other_logit')
+```
+
+# Generate grouping structures
+```{r}
+nclust <- ncol(data_logit)
+# root <- as.phylo(root)
+order <- as.phylo(root)$tip.label
+
+tree <- treekoR:::findChildren(ggtree(as.phylo(root),
+                                            ladderize = F, layout = 'dendrogram'))
+
+groups <- generateGroups(tree = tree, nClust = nclust, 
+                         proportions = data_logit, means = markerMeanCellType)
+```
+
+# Process training and testing data
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- cbind(data_logit, markerMeanCellType) 
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+# X_train <- cbind(X_train, clinicaldata_info)
+# Extract response variable
+y_train <- as.numeric(levels(condition))[condition]
+```
+
+## Testing
+```{r}
+X_test <- cbind(data_val_logit, markerMeanCellType_val) %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+# X_test <- cbind(X_test, clinicaldata_info_3)
+```
+
+## Fit Overlap model
+```{r}
+groups <- lapply(groups, sort)
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994)
+```
+## Predict on test data
+```{r}
+y_test <- as.numeric(levels(condition_val))[condition_val]
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../dioscRi_manuscript/auc_data//mg_iMUBAC_auc_all_study_3.csv')
+
+```
+
+# Visualise Resulting Tree
+```{r, fig.height=20, fig.width=40}
+p.all <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG",
+                   trainingData = X_train, title = "Manual Gating")
+
+# ggsave(file="../Plots/fs_tree.svg", plot=p, width=18, height=16, dpi = 1200)
+```
+
+# Look at just the proportions
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- data_logit %>%
+  as.matrix()
+```
+
+## Testing
+```{r}
+X_test <- data_val_logit %>%
+  as.matrix()
+
+```
+
+```{r}
+groups <- generateGroups(tree = tree, nClust = 11, proportions = data_logit,
+                         means = markerMeanCellType, type = "prop")
+```
+
+## Fit Overlap model
+```{r}
+groups <- lapply(groups, sort)
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994)
+```
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, 
+                    title = "Study 3 - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../dioscRi_manuscript/auc_data/mg_iMUBAC_auc_prop_study_3.csv')
+
+```
+
+## Look at tree plot
+```{r, fig.height=20, fig.width=40}
+p.prop <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", 
+                   trainingData = X_train, heatmap = FALSE)
+```
+
+# Look at just the means
+## Training
+```{r}
+# Combine all input data matrices
+X_train <- markerMeanCellType %>%
+  as.matrix()
+  
+# Scale the combined data
+scaleVals <- preProcess(X_train, method = c('scale'))
+X_train <- predict(scaleVals, X_train) %>%
+    as.matrix()
+```
+
+## Testing
+```{r}
+X_test <- markerMeanCellType_val %>%
+  as.matrix()
+X_test <- predict(scaleVals, X_test)
+```
+
+```{r}
+groups <- as.list(seq (1,ncol(markerMeanCellType),1)) 
+```
+
+## Fit Overlap model
+```{r}
+fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups, 
+                penalty = "grLasso", seed = 1994)
+```
+
+## Predict on test data
+```{r}
+test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, 
+                    title = "Study 3 - All AUC =")
+test_auc$plot
+
+write.csv(test_auc$preds,
+          '../dioscRi_manuscript/auc_data/mg_iMUBAC_auc_means_study_3.csv')
+
+```
+
+```{r, fig.height=24, fig.width=40}
+order <- gsub("_logit", "", order)
+order <- gsub("_", " ", order)
+p.means <- plotHeatmap(fit$fit, type = "MG", order = order)
+```
+
+```{r, fig.width=20, fig.height=12, eval=TRUE}
+pdf(file = "../dioscRi_manuscript/Plots/feature_trees_mg_iMUBAC.pdf",   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 12) # The height of the plot in inches
+p.prop_mean <- cowplot::plot_grid(p.prop, p.means, nrow = 2, 
+                                  labels = LETTERS[1:2], align = "hv")
+cowplot::plot_grid(p.prop_mean, p.all, ncol = 2, labels = c("", "C"))
+dev.off()
+```
+

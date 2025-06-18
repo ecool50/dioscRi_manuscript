@@ -1,0 +1,724 @@
+---
+title: "Code to generate various parts of Figure 2"
+author: "Elijah WIllie"
+date: "2024-11-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(ROCR)
+  library(scales)
+  library(ggnewscale)
+  library(cvAUC)
+  library(pROC)
+  library(Polychrome)
+  library(RColorBrewer)
+})
+source('~/Documents/PhD/bioheart_analysis/dioscRi_manuscript/scripts/normalisation_plotting.R')
+set_random_seed(1994)
+```
+
+# load both studies
+```{r}
+nCores <- 4
+BPPARAM <- simpleSeg:::generateBPParam(nCores)
+theme_set(theme_classic())
+```
+
+# Set the markers
+```{r}
+useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
+
+allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
+                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
+                'CD196_CCR6',
+                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
+                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
+                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
+                "CD45_108", "P2X7", "NOX5")
+```
+
+# Load in sce objects
+```{r}
+load('../../sce_dat/study_4_MMD_VAE_final.RData')
+load('../../sce_dat/study_3_MMD_VAE_final.RData')
+load('../../sce_dat/bioheart_cyCombine_batch_corrected.RData')
+load('../../sce_dat/bioheart_iMUBAC_batch_corrected.RData')
+```
+
+# Update the markers
+```{r}
+useMarkers <- gsub("_", "-", useMarkers)
+allMarkers <- gsub("_", "-", allMarkers)
+```
+
+# Define cell types of interest
+```{r}
+# only use celltypes that is present in both batches
+final_celltypes <- c(
+   "B cells",
+   "CD8hi",
+   "14+ monos",
+   "CD4+ Tconv",
+   "CD8lo",
+   "NK",
+   "16+ monos",
+   "CD4+ Treg",
+   "pDCs",
+   "CD141+ DCs",
+   "CD1c+ DCs"
+    )
+```
+
+
+# Load in teh raw data for the BioHEART datasets
+```{r}
+df_4_raw <- assay(sce_norm, 'raw') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype_new = sce_norm$Celltype_new) %>%
+    dplyr::mutate(Celltype = sce_norm$mg_cell_type_distinct) %>%
+    dplyr::mutate(batch = sce_norm$CyTOF.Batch) %>%
+    dplyr::mutate(sample_id = sce_norm$sample_id) %>%
+    dplyr::mutate(Age = sce_norm$Age) %>%
+    dplyr::mutate(Gender = sce_norm$Gender) %>%
+    dplyr::mutate(Statin = sce_norm$Statin) %>%
+    dplyr::mutate(Gensini = as.factor(sce_norm$gensini_bin)) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+df_3_raw <- assay(sce_3_norm, 'raw') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype_new = sce_3_norm$Celltype_new) %>%
+    dplyr::mutate(Celltype = sce_3_norm$CellTypes) %>%
+    dplyr::mutate(batch = sce_3_norm$Batch) %>%
+    dplyr::mutate(sample_id = sce_3_norm$sample_id) %>%
+    dplyr::mutate(Age = sce_3_norm$Age) %>%
+    dplyr::mutate(Gender = sce_3_norm$Gender) %>%
+    dplyr::mutate(Statin = sce_3_norm$Statin) %>%
+    dplyr::mutate(Gensini = as.factor(sce_3_norm$Gensini_bin)) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+df_raw <- rbind(df_3_raw, df_4_raw)
+
+```
+
+
+# Load in the dioscRi normalised data for the BioHEART datasets
+```{r}
+df_4_norm <- assay(sce_norm, 'norm') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype_new = sce_norm$Celltype_new) %>%
+    dplyr::mutate(Celltype = sce_norm$mg_cell_type_distinct) %>%
+    dplyr::mutate(batch = sce_norm$CyTOF.Batch) %>%
+    dplyr::mutate(sample_id = sce_norm$sample_id) %>%
+    dplyr::mutate(Age = sce_norm$Age) %>%
+    dplyr::mutate(Gender = sce_norm$Gender) %>%
+    dplyr::mutate(Statin = sce_norm$Statin) %>%
+    dplyr::mutate(Gensini = as.factor(sce_norm$gensini_bin)) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+df_3_norm <- assay(sce_3_norm, 'norm') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype_new = sce_3_norm$Celltype_new) %>%
+    dplyr::mutate(Celltype = sce_3_norm$CellTypes) %>%
+    dplyr::mutate(batch = sce_3_norm$Batch) %>%
+    dplyr::mutate(sample_id = sce_3_norm$sample_id) %>%
+    dplyr::mutate(Age = sce_3_norm$Age) %>%
+    dplyr::mutate(Gender = sce_3_norm$Gender) %>%
+    dplyr::mutate(Statin = sce_3_norm$Statin) %>%
+    dplyr::mutate(Gensini = as.factor(sce_3_norm$Gensini_bin)) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+df_norm <- rbind(df_3_norm, df_4_norm)
+```
+
+# Load in the cyCombine normalised data for the BioHEART datasets
+```{r}
+df_norm_cycombine <- assay(sce_cycombine, 'corrected') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype = sce_cycombine$CellType) %>%
+    dplyr::mutate(sample_id = sce_cycombine$sample_id) %>%
+    dplyr::mutate(batch = sce_cycombine$batch) %>%
+    dplyr::mutate(Gensini = sce_cycombine$Gensini_bin) %>%
+    dplyr::mutate(Statin = sce_cycombine$Statin) %>%
+    dplyr::mutate(Age = sce_cycombine$Age) %>%
+    dplyr::mutate(Gender = sce_cycombine$Gender) %>%
+    # dplyr::filter(batch == 4)  %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+
+```
+
+# Load in the iMUBAC normalised data for the BioHEART datasets
+```{r}
+df_norm_imubac <- assay(sce_imubac, 'normexprs') %>%
+  t() %>%
+  as.data.frame() %>%
+    dplyr::mutate(Celltype = sce_imubac$CellType) %>%
+    dplyr::mutate(sample_id = sce_imubac$sample_id) %>%
+    dplyr::mutate(batch = sce_imubac$batch) %>%
+    dplyr::mutate(Gensini = sce_imubac$Gensini_bin) %>%
+    dplyr::mutate(Statin = sce_imubac$Statin) %>%
+    dplyr::mutate(Age = sce_imubac$Age) %>%
+    dplyr::mutate(Gender = sce_imubac$Gender) %>%
+    # dplyr::filter(batch == 4) %>%
+    dplyr::filter(Celltype %in% final_celltypes)
+```
+
+# Cluster the discovery 
+```{r}
+# get the number of clusters
+numClusters = length(final_celltypes)
+    
+# Run FuseSOM for each dataset
+clusters <- runFuseSOM(rbind(df_norm[, useMarkers]), 
+                                    numClusters = numClusters)$clusters
+gc()
+    
+clusters_cycombine <- runFuseSOM(df_norm_cycombine[, useMarkers],
+                                    numClusters = numClusters)$clusters
+gc()
+    
+clusters_imubac <- runFuseSOM(df_norm_imubac[, useMarkers],
+                                    numClusters = numClusters)$clusters
+gc()
+    
+clusters_raw <- runFuseSOM(df_raw[, useMarkers], 
+                                    numClusters = numClusters)$clusters
+gc()
+```
+
+# Compute ARI with cell type
+```{r}
+# record the scores for manual gates
+ari_dscri_mg <- aricode::ARI(clusters, df_norm$Celltype)
+ari_cycombine_mg <- aricode::ARI(clusters_cycombine, df_norm_cycombine$Celltype)
+ari_imubac_mg <- aricode::ARI(clusters_imubac, df_norm_imubac$Celltype)
+ari_raw_mg <- aricode::ARI(clusters_raw, df_raw$Celltype)
+
+mg_ari <- c(ari_dscri_mg, ari_cycombine_mg, ari_imubac_mg, ari_raw_mg)
+```
+
+# generate Figure 2I
+```{r}
+ari_df <- data.frame(
+                     dioscRi = ari_dscri_mg,
+                     cyCombine = ari_cycombine_mg,
+                     iMUBAC = ari_imubac_mg,
+                     Raw = ari_raw_mg
+                     ) %>%
+    reshape2::melt() %>%
+    dplyr::rename(Comparison = variable,
+           ARI = value) %>%
+    dplyr::mutate(Comparison = factor(Comparison, 
+                                      levels = c("dioscRi","cyCombine","iMUBAC","Raw")))
+
+p_ari <- ari_df %>%
+  ggplot(aes(Comparison, ARI, fill = Comparison)) +
+  geom_col(width = 0.4) +  # ← adjust this width to control bar thickness
+  ggtitle(label = "Combined discovery and validation") +
+    theme_bw() +
+  theme(
+    axis.text.x = element_text(size = 12, hjust = 1),
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    axis.title.x = element_blank(), 
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.position = "none",  # lowercase 'none'
+    strip.text.x = element_text(size = 12, colour = "black", face = "bold"),
+    aspect.ratio = 1
+  ) +
+  scale_fill_npg()
+
+pdf(file = "../Plots/Figure_2_ARI.pdf",   # The directory you want to save the file in
+    width = 5, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p_ari
+dev.off()
+
+```
+
+
+
+# Generate figures 2E and 2F
+## dioscRi discovery
+```{r}
+# Compute density and find minimum
+valley_lines <- df_4_norm %>%
+  dplyr::filter(sample_id %in% c("87", "88")) %>%
+  dplyr::select(CD3, sample_id) %>%
+  group_by(sample_id) %>%
+  summarise(
+    min_x = {
+      d <- density(CD3, na.rm = TRUE, from = 0, to = 0.75)
+      d$x[which.min(d$y)]
+    },
+    .groups = "drop"
+  )
+
+# Plot with density and per-sample valley line
+p_post <- df_4_norm %>%
+  filter(sample_id %in% c("87", "88")) %>%
+  mutate(Sample = factor(sample_id)) %>%
+  ggplot(aes(CD3, color = Sample)) +
+  geom_density() +
+  scale_x_continuous(limits = c(0, 0.9), oob = scales::oob_keep) +
+  geom_vline(
+    data = valley_lines,
+    aes(xintercept = min_x),
+    linetype = "dashed",
+    colour = "red",
+    linewidth = 1
+  ) +
+  ggtitle("dioscRi") +
+  ylab("Density") +
+  xlab("") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = 12),
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    axis.title.x = element_text(size = 12),
+    # legend.position = "none",
+    aspect.ratio = 1,
+    strip.text.x = element_text(size = 12, colour = "black", face = "bold")
+  ) +
+  scale_color_npg()
+
+pdf(file = "../Plots/Figure_2_density_post.pdf",   # The directory you want to save the file in
+    width = 5, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p_post
+dev.off()
+```
+
+## Raw discovery
+```{r}
+# put the data on the same scale as the normalised for comparison
+preProcValues_raw <- preProcess(df_4_raw[, useMarkers], method = c("range"))
+df_4_raw[, useMarkers] <- predict(preProcValues_raw, df_4_raw[, useMarkers])
+
+p_pre <- df_4_raw  %>%
+    dplyr::filter(sample_id %in% c("87", "88")) %>%
+    dplyr::select(CD3, sample_id) %>%
+    mutate(Sample = as.factor(sample_id)) %>%
+    # reshape2::melt(id.vars = "sample_id") %>%
+    # dplyr::mutate(Sample = as.factor(sample_id)) %>%
+    ggplot(aes(CD3, color = Sample)) +
+    # facet_wrap(~variable, scales = "free") +
+    geom_density() +
+    scale_x_continuous(limits = c(0,0.9), oob = scales::oob_keep) +
+    geom_vline(
+    data = valley_lines,
+    aes(xintercept = min_x),
+    linetype = "dashed",
+    colour = "red",
+    linewidth = 1
+  ) +
+    ggtitle("Raw") +
+    ylab("Density") + 
+    xlab("") +
+    theme_bw() +
+        theme(
+      axis.text.x = element_text(size = 12),
+      plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+      axis.text.y = element_text(size = 12),
+      axis.title.y = element_text(size = 12),
+      axis.title.x = element_text(size = 12),
+      aspect.ratio = 1,
+      # legend.position = "none",
+      strip.text.x = element_text(size = 12, 
+                                  colour = "black", face = 'bold')
+    ) +
+    scale_color_npg()
+
+pdf(file = "../Plots/Figure_2_density_pre.pdf",   # The directory you want to save the file in
+    width = 5, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p_pre
+dev.off()
+```
+
+
+# Bi-axial plots of normalised expression for Figures 2A, 2B, 2C, and 2D
+```{r}
+# helper density function
+get_density <- function(x, y, ...) {
+  dens <- MASS::kde2d(x, y, ...)
+  ix <- findInterval(x, dens$x)
+  iy <- findInterval(y, dens$y)
+  ii <- cbind(ix, iy)
+  return(dens$z[ii])
+}
+```
+
+## 2A
+```{r}
+p.raw <- df_4_raw %>%
+        dplyr::filter(sample_id == 87) %>%
+        dplyr::mutate(density = get_density(CD3, `HLA-DR`, n = 100)) %>%
+        ggplot(aes(x = CD3, y = `HLA-DR`, color = density)) + 
+    geom_point(size = 1) + 
+    geom_vline(
+    data = valley_lines,
+    aes(xintercept = min_x - 0),
+    linetype = "dashed",
+    colour = "red",
+    linewidth = 1
+  ) + 
+   scale_x_continuous(limits = c(0,0.9), oob = scales::oob_keep) +
+    scale_y_continuous(limits = c(0,0.91), oob = scales::oob_keep) +
+    scale_color_gradientn(trans = "sqrt", colors = c("navy", rev(brewer.pal(11, "Spectral")))) +
+      theme_bw() +
+        ggtitle(label = paste0("Raw - Sample 87")) +
+        theme(
+            legend.title = element_text(color = "black", size = 12),
+            plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+            legend.text = element_text(color = "black", size = 12),
+            legend.position = "none",
+            axis.text.x = element_text(size = 12),
+            axis.text.y = element_text(size = 12),
+            aspect.ratio = 1
+          )
+
+pdf(file = "../Plots/Figure_2_87_raw.pdf",   # The directory you want to save the file in
+    width = 5, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.raw
+dev.off()
+```
+
+# 2C
+```{r}
+p.norm <- df_4_norm %>%
+        # dplyr::filter(batch == 4) %>%
+        dplyr::filter(sample_id == 87) %>%
+    dplyr::mutate(density = get_density(CD3, `HLA-DR`, n = 100)) %>%
+        ggplot(aes(x = CD3, y = `HLA-DR`, colour = density)) + 
+        geom_point(size = 1) +
+        # geom_rect(aes(xmin = 0.4, xmax = 0.8, ymin = 0, ymax = 0.75), fill = NA, color = "green", linetype = "dashed") +
+    geom_vline(
+    data = valley_lines,
+    aes(xintercept = min_x - 0),
+    linetype = "dashed",
+    colour = "red",
+    linewidth = 1
+  ) + 
+       scale_x_continuous(limits = c(0,0.9), oob = scales::oob_keep) +
+    scale_y_continuous(limits = c(0,0.91), oob = scales::oob_keep) +
+    scale_color_gradientn(trans = "sqrt", colors = c("navy", rev(brewer.pal(11, "Spectral")))) +
+      theme_bw() +
+        ggtitle(label = paste0("dioscRi - Sample 87")) +
+        theme(
+            legend.title = element_text(color = "black", size = 12),
+            plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+            legend.text = element_text(color = "black", size = 12),
+            axis.text.x = element_text(size = 12),
+            axis.text.y = element_text(size = 12),
+            aspect.ratio = 1,
+            legend.position = "none"
+          )
+
+pdf(file = "../Plots/Figure_2_87_norm.pdf",   # The directory you want to save the file in
+    width = 5, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.norm
+dev.off()
+```
+
+
+## 2B
+```{r}
+p.raw.88 <- df_4_raw %>%
+        # dplyr::filter(batch == 4) %>%
+        dplyr::filter(sample_id == 88) %>%
+    dplyr::mutate(density = get_density(CD3, `HLA-DR`, n = 100)) %>%
+        ggplot(aes(x = CD3, y = `HLA-DR`, colour = density)) + 
+        geom_point(size = 1) +
+    # geom_rect(aes(xmin = 0.4, xmax = 0.8, ymin = 0, ymax = 0.75), fill = NA, color = "green", linetype = "dashed") +
+    geom_vline(
+    data = valley_lines,
+    aes(xintercept = min_x - 0),
+    linetype = "dashed",
+    colour = "red",
+    linewidth = 1
+  ) + 
+      scale_x_continuous(limits = c(0,0.9), oob = scales::oob_keep) +
+    scale_y_continuous(limits = c(0,0.91), oob = scales::oob_keep) +
+    scale_color_gradientn(trans = "sqrt", colors = c("navy", rev(brewer.pal(11, "Spectral")))) +
+      theme_bw() +
+        ggtitle(label = paste0("Raw - Sample 88")) +
+        theme(
+            legend.title = element_text(color = "black", size = 12),
+            plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+            legend.text = element_text(color = "black", size = 12),
+            legend.position = "none",
+            axis.text.x = element_text(size = 12),
+            axis.text.y = element_text(size = 12),
+            aspect.ratio = 1
+          )
+
+pdf(file = "../Plots/Figure_2_88_raw.pdf",   # The directory you want to save the file in
+    width = 5, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.raw.88
+dev.off()
+```
+
+# 2D
+```{r}
+p.norm.88 <- df_4_norm %>%
+        # dplyr::filter(batch == 4) %>%
+        dplyr::filter(sample_id == 88) %>%
+    dplyr::mutate(density = get_density(CD3, `HLA-DR`, n = 100)) %>%
+        ggplot(aes(x = CD3, y = `HLA-DR`, colour = density)) + 
+        geom_point(size = 1) +
+       # geom_rect(aes(xmin = 0.4, xmax = 0.8, ymin = 0, ymax = 0.75), fill = NA, color = "green", linetype = "dashed") +
+    geom_vline(
+    data = valley_lines,
+    aes(xintercept = min_x - 0),
+    linetype = "dashed",
+    colour = "red",
+    linewidth = 1
+  ) + 
+       scale_x_continuous(limits = c(0,0.9), oob = scales::oob_keep) +
+    scale_y_continuous(limits = c(0,0.91), oob = scales::oob_keep) +
+    scale_color_gradientn(trans = "sqrt", colors = c("navy", rev(brewer.pal(11, "Spectral")))) +
+      theme_bw() +
+        ggtitle(label = "dioscRi - Sample 88") +
+        theme(
+            legend.title = element_text(color = "black", size = 12),
+            plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+            legend.text = element_text(color = "black", size = 12),
+            axis.text.x = element_text(size = 12),
+            axis.text.y = element_text(size = 12),
+            aspect.ratio = 1,
+            legend.position = "none"
+          )
+
+pdf(file = "../Plots/Figure_2_88_norm.pdf",   # The directory you want to save the file in
+    width = 5, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.norm.88
+dev.off()
+```
+
+
+
+# Generate Figure 2H and 2G
+```{r}
+preProcValues_cycombine <- preProcess(df_norm_cycombine[, useMarkers], method = c("range"))
+df_norm_cycombine[, useMarkers] <- predict(preProcValues_cycombine, df_norm_cycombine[, useMarkers])
+
+preProcValues_imubac <- preProcess(df_norm_imubac[, useMarkers], method = c("range"))
+df_norm_imubac[, useMarkers] <- predict(preProcValues_imubac, df_norm_imubac[, useMarkers])
+
+preProcValues_raw <- preProcess(df_raw[, useMarkers], method = c("range"))
+df_raw[, useMarkers] <- predict(preProcValues_raw, df_raw[, useMarkers])
+```
+
+## 2H
+```{r}
+# compute celltype summaries
+celltypes <- final_celltypes
+
+t_raw_mg <- get_summaries_per_celltype(data = df_raw, 
+                                   markers = useMarkers, celltypes = celltypes)
+
+t_norm_mg <- get_summaries_per_celltype(data = df_norm, 
+                                   markers = useMarkers, celltypes = celltypes)
+
+t_norm_cycombine_mg <- get_summaries_per_celltype(data = df_norm_cycombine, 
+                                   markers = useMarkers, celltypes = celltypes)
+
+t_norm_imubac_mg <- get_summaries_per_celltype(data = df_norm_imubac, 
+                                   markers = useMarkers, celltypes = celltypes)
+
+# plot boxplot
+p.cv.box <- cvBoxPlotByMarker_ggplot(raw = t_raw_mg, dioscri = t_norm_mg, 
+                                         cycombine = t_norm_cycombine_mg, 
+                                         imubac = t_norm_imubac_mg,
+                                         title = "Variance removed by normalisation")
+
+pdf(file = "../Plots/Figure_2_relative_CV.pdf",   # The directory you want to save the file in
+    width = 5, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.cv.box
+dev.off()
+```
+
+## 2G
+### Normalised data
+```{r}
+k <- 27
+
+df_norm_sub <- df_norm %>%
+    dplyr::select(useMarkers)
+# Step 2: Fit linear models and calculate R^2 for each PC
+r_squared <- sapply(1:k, function(i) {
+  model <- lm(df_norm_sub[, i] ~ Celltype, data = df_norm %>%
+                  dplyr::select(Celltype, Gender, Gensini, Age))  # Fit linear model
+  summary(model)$r.squared  # Extract R^2
+})
+```
+
+### Raw data
+```{r}
+
+df_raw_sub <- df_raw %>%
+    dplyr::select(useMarkers)
+# Step 2: Fit linear models and calculate R^2 for each PC
+r_squared_raw <- sapply(1:k, function(i) {
+  model <- lm(df_raw_sub[, i] ~ Celltype, data = df_raw %>%
+                  dplyr::select(Celltype, Gender, Gensini, Age))  # Fit linear model
+  summary(model)$r.squared  # Extract R^2
+})
+```
+
+### cyCombine
+```{r}
+df_norm_cycombine_sub <- df_norm_cycombine %>%
+    dplyr::select(useMarkers)
+# Step 2: Fit linear models and calculate R^2 for each PC
+r_squared_cycombine <- sapply(1:k, function(i) {
+  model <- lm(df_norm_cycombine_sub[, i] ~ Celltype, data = df_norm_cycombine %>%
+                  dplyr::select(Celltype, Gender, Gensini, Age))  # Fit linear model
+  summary(model)$r.squared  # Extract R^2
+})
+
+```
+
+### iMUBAC
+```{r}
+df_norm_imubac_sub <- df_norm_imubac %>%
+    dplyr::select(useMarkers)
+
+# Step 2: Fit linear models and calculate R^2 for each PC
+r_squared_imubac <- sapply(1:k, function(i) {
+  model <- lm(df_norm_imubac_sub[, i] ~ Celltype, data = df_norm_imubac %>%
+                  dplyr::select(Celltype, Gender, Gensini, Age))  # Fit linear model
+  summary(model)$r.squared  # Extract R^2
+})
+```
+
+## Compute the R2 values and generate plot
+```{r}
+rsq_scores_all <- data.frame(dioscRi = r_squared, cyCombine = r_squared_cycombine,
+                            iMUBAC = r_squared_imubac, Raw = r_squared_raw,
+                            Marker = useMarkers) %>%
+    reshape2::melt(id.var = "Marker") %>%
+    dplyr::rename(Method = variable) %>%
+    dplyr::rename(Rsq = value) %>%
+    dplyr::mutate(Method = factor(Method, 
+                                         levels = c("dioscRi","cyCombine","iMUBAC","Raw")))
+
+p.rsq_line <- rsq_scores_all %>%
+    ggplot(aes(reorder(Marker, Rsq), Rsq, colour = Method)) +
+    geom_line(aes(group = Method)) +
+    geom_point(size = 3) +
+    ggtitle("Variance explained by cell type") +
+    xlab("") +
+    ylab("R-squared") + 
+    theme_bw() +
+     theme(
+   axis.text.y = element_text(size = 12),
+                axis.text.x = element_text(size = 12, angle = 90, hjust = 1),
+                axis.title.x = element_text(size = 12),
+                axis.title.y = element_text(size = 12),
+                plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+                legend.title = element_blank(),
+                xis.line = element_line(colour = "black"),
+   # aspect.ratio = 1,
+    # legend.position = c(0.7, 0.25),
+    strip.text.x = element_text(size = 12, colour = "black", face = 'bold'),
+   plot.margin    = margin(t = 0, r = 0, b = 0, l = 0)
+  ) + 
+    scale_color_npg() 
+
+pdf(file = "../Plots/Figure_2_rsq.pdf",   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
+    p.rsq_line
+dev.off()
+    
+```
+
+# Figure 2J and 2K
+```{r}
+# set colors of interest
+all_colors <- c(
+  "#1f77b4",  # Blue
+  "#ff7f0e",  # Orange
+  "#9467bd",  # Purple
+  "#8c564b",  # Brown
+  "#e377c2",  # Pink
+  "#7f7f7f",  # Gray
+  "#bcbd22",  # Olive-yellow
+  "#17becf",  # Cyan
+  "#aec7e8",  # Light blue
+  "#c5b0d5"   # Lavender
+)
+my_colors_1 <- c("Raw" = all_colors[[1]], "Normalised" = all_colors[[2]])
+```
+
+
+## 2J
+```{r, fig.height=6, fig.width=6}
+baseline_fs <- fread('../auc_data/fs_dioscRi_auc_all_study_3_baseline.csv')
+full_fs <- fread('../auc_data/fs_dioscRi_auc_all_study_3.csv')
+
+baseline_fs_roc <- roc(baseline_fs, Truth, Predicted)
+full_fs_roc <- roc(full_fs, Truth, Predicted)
+
+p.fs.full <- ggrocs(rocs = list("Raw" = baseline_fs_roc, "Normalised" = full_fs_roc), 
+        data_name = "Predicting coronoary artery disease", legend_title = "Unsupervised Clustering", 
+        legend_order = c("Raw", "Normalised"), color_scale = my_colors_1, which_plot = "roc")
+
+pdf(file = "../Plots/Figure_2_unsupervised_roc.pdf",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+    p.fs.full
+dev.off()
+```
+
+## 2J
+```{r, fig.height=6, fig.width=6}
+baseline_mg <- fread('../auc_data/mg_dioscRi_auc_all_study_3_baseline.csv')
+full_mg <- fread('../auc_data/mg_dioscRi_auc_all_study_3.csv')
+
+full_mg_roc <- roc(full_mg, Truth, Predicted)
+baseline_mg_roc <- roc(baseline_mg, Truth, Predicted)
+
+p.mg.full <- ggrocs(rocs = list("Raw" = baseline_mg_roc, "Normalised" = full_mg_roc), 
+        data_name = "Predicting coronoary artery disease", legend_title = "Manual Gating", 
+        legend_order = c("Raw", "Normalised"), color_scale = my_colors_1, which_plot = "roc")
+
+pdf(file = "../Plots/Figure_2_manual_gating_roc.pdf",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+    p.mg.full
+dev.off()
+
+```

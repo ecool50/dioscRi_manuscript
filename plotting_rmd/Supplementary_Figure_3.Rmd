@@ -1,0 +1,225 @@
+---
+title: "Model Experiments Plots"
+author: "Elijah Willie"
+date: "2024-12-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(ROCR)
+  library(pROC)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+  library(dioscRi)
+})
+set_random_seed(1994)
+```
+
+# Number of clusters
+```{r}
+bioheart <- fread('../auc_data/fs_dioscRi_auc_all_study_multi_cluster.csv') %>%
+  dplyr::select(Cluster,AUC,Dataset)
+cmv <- fread('../auc_data/cmv_dioscRi_aucs_multi_cluster.csv') %>%
+  dplyr::select(Cluster,AUC,Dataset)
+bcell <- fread('../auc_data/bcell_dioscRi_aucs_multi_cluster.csv') %>%
+  dplyr::select(Cluster,AUC,Dataset)
+bcancer <- fread('../auc_data/breast_cancer_dioscRi_aucs_multi_cluster.csv') %>%
+  dplyr::select(Cluster,AUC,Dataset)
+```
+
+# Supplementary Figure 3A
+```{r}
+dfClust <- rbind(bioheart, cmv, bcell, bcancer) %>%
+  melt(id.var = c("Cluster", "Dataset")) 
+
+p.clust.auc <- ggplot(dfClust, aes(x = Cluster)) +
+  geom_line(aes(y = value, color = Dataset), size = 1) +
+  geom_point(aes(y = value)) +
+  scale_x_continuous(labels=as.character(dfClust$Cluster),breaks=dfClust$Cluster) + 
+  labs(title = "",
+       x = "Number of Clusters", y = "AUC") +
+      # theme_bw() +
+      theme(plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+            plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+            axis.title.x = element_text(color="Black", size=12),
+            axis.title.y = element_text(color="Black", size=12),
+            axis.text.y = element_text(size = 12),
+            axis.text.x = element_text(size = 12),
+            strip.text.x = element_text(size = 12),
+            legend.title = element_blank(), #change legend title font size
+            legend.text = element_text(size=12), #change legend text font size))
+            legend.position = c(1, 0), 
+            legend.justification = c(1, 0), 
+            legend.background = ggplot2::element_rect(fill = "transparent"),
+            panel.background = element_blank())
+```
+
+# Bottleneck Size (Supplementary Figure 3B and 3C)
+```{r}
+df <- fread('../auc_data/fs_dioscRi_auc_all_study_bottleneck.csv') %>%
+  dplyr::mutate(test_total = test_mmd + test_recon)
+
+p.bn.auc <- ggplot(df, aes(x = Bottleneck, y = AUC)) +
+  geom_line(size = 1, color = "black") +
+  geom_point(aes(y = AUC)) +
+  labs(title = "",
+       x = "Bottleneck Size", y = "AUC") +
+  # theme_minimal() +
+  scale_x_continuous(labels=as.character(df$Bottleneck),breaks=df$Bottleneck) +
+  theme(
+    plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+            plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+            axis.title.x = element_text(color="Black", size=12),
+            axis.title.y = element_text(color="Black", size=12),
+            axis.text.y = element_text(size = 12),
+            axis.text.x = element_text(size = 12),
+            strip.text.x = element_text(size = 12)
+  )
+
+p.bn.er <- ggplot(df, aes(x = Bottleneck)) +
+  geom_line(aes(y = train_total, color = "Discovery"), size = 1) +
+  geom_point(aes(y = train_total)) +
+  geom_line(aes(y = test_total, color = "Validation"), size = 1, linetype = "dashed") +
+  geom_point(aes(y = test_total)) +
+  # scale_x_continuous(labels=as.character(df$Lambda),breaks=df$Lambda) + 
+  labs(title = "",
+       x = "Bottleneck Size", y = "Total Loss") +
+  scale_x_continuous(labels=as.character(df$Bottleneck),breaks=df$Bottleneck) +
+  scale_color_manual(values = c("Discovery" = "blue", "Validation" = "red")) +
+      # theme_bw() +
+      theme(plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+            plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+            axis.title.x = element_text(color="Black", size=12),
+            axis.title.y = element_text(color="Black", size=12),
+            axis.text.y = element_text(size = 12),
+            axis.text.x = element_text(size = 12),
+            strip.text.x = element_text(size = 12),
+            legend.title = element_blank(), #change legend title font size
+            legend.text = element_text(size=12), #change legend text font size))
+            legend.position = "top")
+```
+
+
+# Lambda (Supplementary Figure 3D and 3E)
+```{r}
+df <- fread('../auc_data/fs_dioscRi_auc_all_study_lambda.csv') %>%
+  dplyr::mutate(test_total = test_mmd + test_recon)
+
+p.lambda.auc <- ggplot(df, aes(x = Lambda, y = AUC)) +
+  geom_line(size = 1, color = "black") +
+  geom_point(aes(y = AUC)) +
+  labs(title = "",
+       x = "Lambda", y = "AUC") +
+  # theme_minimal() +
+  scale_x_continuous(labels=as.character(df$Lambda),breaks=df$Lambda) +
+  theme(
+    plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+            plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+            axis.title.x = element_text(color="Black", size=12),
+            axis.title.y = element_text(color="Black", size=12),
+            axis.text.y = element_text(size = 12),
+            axis.text.x = element_text(size = 12),
+            strip.text.x = element_text(size = 12)
+  )
+
+p.lambda.er <- ggplot(df, aes(x = Lambda)) +
+  geom_line(aes(y = train_total, color = "Discovery"), size = 1) +
+  geom_point(aes(y = train_total)) +
+  geom_line(aes(y = test_total, color = "Validation"), size = 1, linetype = "dashed") +
+  geom_point(aes(y = test_total)) +
+  scale_x_continuous(labels=as.character(df$Lambda),breaks=df$Lambda) +
+  labs(title = "",
+       x = "Lambda", y = "Total Loss") +
+  # scale_x_continuous(labels=as.character(df$Bottleneck),breaks=df$Bottleneck) +
+  scale_color_manual(values = c("Discovery" = "blue", "Validation" = "red")) +
+      # theme_bw() +
+      theme(plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+            plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+            axis.title.x = element_text(color="Black", size=12),
+            axis.title.y = element_text(color="Black", size=12),
+            axis.text.y = element_text(size = 12),
+            axis.text.x = element_text(size = 12),
+            strip.text.x = element_text(size = 12),
+            legend.title = element_blank(), #change legend title font size
+            legend.text = element_text(size=12), #change legend text font size))
+            legend.position = "none")
+```
+
+# Ref Samples (Supplementary Figure 3F and 3G)
+```{r}
+df <- fread('../auc_data/fs_dioscRi_auc_all_study_ref_samples.csv') %>%
+  dplyr::mutate(test_total = test_mmd + test_recon)
+
+p.ref.auc <- ggplot(df, aes(x = num_samples, y = AUC)) +
+  geom_line(size = 1, color = "black") +
+  geom_point(aes(y = AUC)) +
+  labs(title = "",
+       x = "Number of Samples", y = "AUC") +
+  # theme_minimal() +
+  scale_x_continuous(labels=as.character(df$num_samples),breaks=df$num_samples) +
+  theme(
+    plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+            plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+            axis.title.x = element_text(color="Black", size=12),
+            axis.title.y = element_text(color="Black", size=12),
+            axis.text.y = element_text(size = 12),
+            axis.text.x = element_text(size = 12),
+            strip.text.x = element_text(size = 12)
+  )
+
+p.ref.er <- ggplot(df, aes(x = num_samples)) +
+  geom_line(aes(y = train_total, color = "Discovery"), size = 1) +
+  geom_point(aes(y = train_total)) +
+  geom_line(aes(y = test_total, color = "Validation"), size = 1, linetype = "dashed") +
+  geom_point(aes(y = test_total)) +
+  scale_x_continuous(labels=as.character(df$num_samples),breaks=df$num_samples) +
+  labs(title = "",
+       x = "Number of Samples", y = "Total Loss") +
+  # scale_x_continuous(labels=as.character(df$Bottleneck),breaks=df$Bottleneck) +
+  scale_color_manual(values = c("Discovery" = "blue", "Validation" = "red")) +
+      # theme_bw() +
+      theme(plot.title = element_text(color="Black", size=12, face="bold", hjust = 0.5),
+            plot.subtitle = element_text(color = "red", size = 12, hjust = 0.5),
+            axis.title.x = element_text(color="Black", size=12),
+            axis.title.y = element_text(color="Black", size=12),
+            axis.text.y = element_text(size = 12),
+            axis.text.x = element_text(size = 12),
+            strip.text.x = element_text(size = 12),
+            legend.title = element_blank(), #change legend title font size
+            legend.text = element_text(size=12), #change legend text font size))
+            legend.position = "none")
+```
+
+```{r, fig.width=10, fig.height=14}
+pdf(file = "../Plots/Supp_Figure_3.pdf",   # The directory you want to save the file in
+    width = 14, # The width of the plot in inches
+    height = 14) # The height of the plot in inches
+
+p.all <- cowplot::plot_grid(p.bn.auc, p.bn.er, p.lambda.auc,
+                            p.lambda.er, p.ref.auc, p.ref.er, 
+                            ncol = 2, labels = LETTERS[2:7])
+cowplot::plot_grid(p.clust.auc, p.all, nrow = 2, 
+                   rel_heights = c(2/5, 3/5), labels = c("A"))
+
+dev.off()
+```
+
