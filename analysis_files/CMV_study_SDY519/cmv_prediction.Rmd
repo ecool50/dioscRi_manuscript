@@ -14,31 +14,12 @@ knitr::opts_chunk$set(echo = TRUE)
 rm(list = ls())
 gc()
 suppressPackageStartupMessages({
-  library(keras3)
-  library(tensorflow)
   library(tidyverse)
   library(FuseSOM)
-  library(ggsci)
-  library(uwot)
   library(data.table)
   library(SingleCellExperiment)
-  library(caret)
-  library(ROCR)
-  library(psych)
-  library(tensorflow)
-  library(glmnet)
-  library(data.tree)
-  library(ggtree)
-  library(ape)
-  library(ggiraph)
-  library(scales)
-  library(ggnewscale)
+  library(dioscRi)
 })
-files.sources = list.files(path = '../../bioheart_analysis/VaeTOF/VaeTOF/R/', full.names = T)
-sapply(files.sources, source)
-set_random_seed(1994)
-
-setwd('~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/')
 ```
 
 ```{r}
@@ -50,7 +31,7 @@ split_and_extract <- function(string, n) {
 
 
 ```{r}
-metaData <- read.csv('DeepLearning_metadata.csv')
+metaData <- read.csv('~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/cmv_metadata.csv')
 metaData <- metaData[, -1]
 
 metaData$sample_id <- lapply(metaData$name, split_and_extract)
@@ -62,8 +43,8 @@ useMarkers <- c("TCRGD", "IGD","HLADR", "CD94","CD85J","CD8","CD56",
 ```
 
 ```{r}
-load("Data/cmv_train_MMD_VAE_sce.RData")
-load("Data/cmv_test_MMD_VAE_sce.RData")
+load("~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/Data/cmv_train_MMD_VAE_sce.RData")
+load("~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/Data/cmv_test_MMD_VAE_sce.RData")
 ```
 
 
@@ -82,18 +63,14 @@ sce_train <- runFuseSOM(sce_train, numClusters = nclust, assay = 'norm',
 ```{r}
 train_x <- reducedDim(sce_train, type = "VAE") %>%
   mutate(cellTypes = sce_train$clusters)
-  # mutate(sample_id = sce_train$sample_id) %>%
-  # dplyr::filter(sample_id %in% c("499712","521467")) %>%
-  # dplyr::select(-sample_id)
 
 test_x <- reducedDim(sce_test, type = "VAE")
 ```
 
 ```{r, eval=T}
-test_clusters <- cellTypeClassifier(train_x, test_x, model = 'lda')
-
+test_clusters <- trainCellTypeClassifier(trainX = train_x, 
+                                         testX = test_x, model = 'lda')
 table(test_clusters)
-
 sce_test$clusters <- test_clusters
 ```
 
@@ -200,8 +177,8 @@ y_test <- as.numeric(levels(condition_test))[condition_test]
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Test set AUC =")
 test_auc$plot
 
-write.csv(test_auc$preds,
-          'cmv_dioscRi_aucs.csv')
+# write.csv(test_auc$preds,
+#           'cmv_dioscRi_aucs.csv')
 ```
 
 
@@ -209,17 +186,4 @@ write.csv(test_auc$preds,
 ```{r, fig.height=10, fig.width=18}
 visualiseModelTree(fit = fit$fit, tree = tree, type = "cluster", 
                    trainingData = X_train)
-```
-
-## Look at heatmap
-```{r, fig.height=6, fig.width=8,eval=T}
-scater::plotGroupedHeatmap(sce_train, 
-                           features = useMarkers, 
-                           group = "clusters", 
-                           block = "clusters",
-                           exprs_values = "counts", 
-                           center = TRUE, 
-                           scale = TRUE, 
-                           zlim = c(-2,2),
-                           cluster_rows = FALSE)
 ```

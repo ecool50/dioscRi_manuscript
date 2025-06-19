@@ -1,7 +1,7 @@
 ---
-title: "B Cell Prediction"
+title: "Breast Cancer Prediction"
 author: "Elijah WIllie"
-date: "2024-06-12"
+date: "2024-06-11"
 output: html_document
 ---
 
@@ -23,20 +23,23 @@ suppressPackageStartupMessages({
 
 # Load in data and compute the reference sample
 ```{r}
-metadata <- read.csv('~/Documents/PhD/DeepLearning_CyTOF/COVID_19_PBMC_Mathew_2020/data/Covid_Bcell_metadata.csv')
-metadata$time_days <- factor(metadata$time_days)
+# Epithelial cell markers
+useMarkers <- c("AKT","AR","BCL2","CA9", "CD24","CD44","CD49f", "cMET","cMYC",
+                 "CyclinB1","ECadherin","EGFR","EpCAM","ERa","EZH2","H3K27me3", "HER2",
+                "HLADR", "K14","K5","K7","K8K18","Ki67","p53","panK",
+                "PRB","PTEN","SMA", "Survivin", "Vimentin"
+                 )           
 
-useMarkers <- c("CD45RA.BUV395","PD.1.BV421","CXCR5.BB515","TCF.1.AF647", 
-                "CD38.BUV661","CD39.APCFire750","CD95.BV650", "Eomes.PEef610",
-                "CCR7.BB700", "Ki.67.AF700","CD16.BUV615", "CD27.BUV737",
-                "CX3CR1.BB790", "CD20.BUV805", "T.bet.PE.Cy7", "HLA.DR.BV786")
+metadata <- read.csv('~/Documents/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data/breast_cancer_metadata.csv')
+
+metadata$dataset <- if_else(metadata$dataset == 'test', 'test', 'train')
 
 ```
 
 # Load normalised data
 ```{r}
-load('~/Documents/PhD/DeepLearning_CyTOF/COVID_19_PBMC_Mathew_2020//data/bcell_down_sampled_train_MMD_VAE_sce.RData')
-load('~/Documents/PhD/DeepLearning_CyTOF/COVID_19_PBMC_Mathew_2020//data/bcell_down_sampled_test_MMD_VAE_sce.RData')
+load('~/Documents/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data/breast_cancer_train_MMD_VAE_sce.RData')
+load('~/Documents/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data/breast_cancer_test_MMD_VAE_sce.RData')
 ```
 
 ## cluster training data
@@ -51,39 +54,43 @@ sce_norm <- runFuseSOM(sce_norm, numClusters = nclust, assay = 'norm',
 ## Select training and testing data
 ```{r}
 train_x <- reducedDim(sce_norm, type = "VAE") %>%
-  mutate(cellTypes = sce_norm$clusters) 
+  mutate(cellTypes = sce_norm$clusters)
 
 test_x <- reducedDim(sce_norm_test, type = "VAE")
 ```
 
 ```{r, eval=T}
-test_clusters <- trainCellTypeClassifier(trainX = train_x, 
-                                         testX = test_x, model = 'lda')
+test_clusters <- trainCellTypeClassifier(trainX = train_x, testX = test_x, model = 'lda')
+
 table(test_clusters)
+
 sce_norm_test$clusters <- test_clusters
 ```
-
 # Set up clinical data
 ## Training
 ```{r}
 clinicaldata <- colData(sce_norm) %>%
   as.data.frame() %>%
-  dplyr::select(sample_id, condition) %>%
-  distinct()
+  dplyr::select(file_name, condition) %>%
+  distinct() %>%
+  dplyr::mutate(sample_id = file_name)
 clinicaldata$sample_id <- as.character(clinicaldata$sample_id)
 
-clinicaldata$condition <- factor(if_else(clinicaldata$condition == "COVID", 1, 0))
+clinicaldata$condition <- factor(if_else(clinicaldata$condition == "T", 1, 0))
+sce_norm$sample_id <- sce_norm$file_name
 ```
 
 ## Testing
 ```{r}
 clinicaldata_test <- colData(sce_norm_test) %>%
   as.data.frame() %>%
-  dplyr::select(sample_id, condition) %>%
-  distinct()
+  dplyr::select(file_name, condition) %>%
+  distinct() %>%
+  dplyr::mutate(sample_id = file_name)
 clinicaldata_test$sample_id <- as.character(clinicaldata_test$sample_id)
 
-clinicaldata_test$condition <- factor(if_else(clinicaldata_test$condition == "COVID", 1, 0))
+clinicaldata_test$condition <- factor(if_else(clinicaldata_test$condition == "T", 1, 0))
+sce_norm_test$sample_id <- sce_norm_test$file_name
 ```
 
 
@@ -130,7 +137,7 @@ markerMeanCellType_test <- computeFeatures(sce = sce_norm_test, featureType = 'm
 nclust <- length(unique(test_clusters))
 tree <- generateTree(features = data_logit, method = "ward")
 tree <- tree$tree
-groups <- generateGroups(tree = tree,nClust = nclust, 
+groups <- generateGroups(tree = tree, nClust = nclust, 
                          proportions = data_logit, means = markerMeanCellType)
 ```
 
@@ -163,6 +170,8 @@ fit <- fitModel(xTrain = X_train, yTrain = y_train,
                 groups = groups, penalty = 'grLasso', seed = 1994)
 ```
 
+
+
 ## Predict on test data
 ```{r}
 y_test <- as.numeric(levels(condition_test))[condition_test]
@@ -170,9 +179,8 @@ test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Test
 test_auc$plot
 
 # write.csv(test_auc$preds,
-#           '../data/Covid_Bcell_dioscRi_aucs.csv')
+#           '../data/breast_cancer_dioscRi_aucs.csv')
 ```
-
 # Visualise Resulting Tree
 ```{r, fig.height=10, fig.width=18}
 visualiseModelTree(fit = fit$fit, tree = tree, type = "cluster", 

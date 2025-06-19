@@ -1,0 +1,203 @@
+---
+title: "Number of clusters experiment - Breast Cancer"
+author: "Elijah Willie"
+date: "2024-10-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+suppressPackageStartupMessages({
+  library(keras3)
+  library(tensorflow)
+  library(tidyverse)
+  library(FuseSOM)
+  library(ggsci)
+  library(uwot)
+  library(data.table)
+  library(SingleCellExperiment)
+  library(caret)
+  library(ROCR)
+  library(psych)
+  library(tensorflow)
+  library(glmnet)
+  library(data.tree)
+  library(ggtree)
+  library(ape)
+  library(grpreg)
+  library(treekoR)
+  library(ggiraph)
+  library(scales)
+  library(ggnewscale)
+})
+files.sources = list.files(path = '../../../bioheart_analysis/VaeTOF/VaeTOF/R/', full.names = T)
+sapply(files.sources, source)
+source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
+# source('~/Documents/PhD/bioheart_analysis/DeepLasso/scripts/deep_learning_helper_funcs.R')
+set_random_seed(1994)
+```
+
+# Load in data and compute the reference sample
+```{r}
+# Epithelial cell markers
+useMarkers <- c("AKT","AR","BCL2","CA9", "CD24","CD44","CD49f", "cMET","cMYC",
+                 "CyclinB1","ECadherin","EGFR","EpCAM","ERa","EZH2","H3K27me3", "HER2",
+                "HLADR", "K14","K5","K7","K8K18","Ki67","p53","panK",
+                "PRB","PTEN","SMA", "Survivin", "Vimentin"
+                 )           
+
+metadata <- read.csv('../data/breast_cancer_metadata.csv')
+
+metadata$dataset <- if_else(metadata$dataset == 'test', 'test', 'train')
+
+```
+
+# Load normalised data
+```{r}
+load('../data/breast_cancer_train_MMD_VAE_sce.RData')
+load('../data/breast_cancer_test_MMD_VAE_sce.RData')
+```
+
+# Set up clinical data
+## Training
+```{r}
+clinicaldata <- colData(sce_norm) %>%
+  as.data.frame() %>%
+  dplyr::select(file_name, condition) %>%
+  distinct() %>%
+  dplyr::mutate(sample_id = file_name)
+clinicaldata$sample_id <- as.character(clinicaldata$sample_id)
+
+clinicaldata$condition <- factor(if_else(clinicaldata$condition == "T", 1, 0))
+sce_norm$sample_id <- sce_norm$file_name
+```
+
+## Testing
+```{r}
+clinicaldata_test <- colData(sce_norm_test) %>%
+  as.data.frame() %>%
+  dplyr::select(file_name, condition) %>%
+  distinct() %>%
+  dplyr::mutate(sample_id = file_name)
+clinicaldata_test$sample_id <- as.character(clinicaldata_test$sample_id)
+
+clinicaldata_test$condition <- factor(if_else(clinicaldata_test$condition == "T", 1, 0))
+sce_norm_test$sample_id <- sce_norm_test$file_name
+```
+
+# Create functions to run the prediction models
+```{r}
+runPredictionModel <- function(sce_train, sce_test, numClusters,
+                               clinical_data_train, clinical_data_test){
+  # cluster data into k clusters
+  sce_train <- runFuseSOM(sce_train, numClusters = numClusters, assay = 'norm',
+                       verbose = FALSE, clusterCol = 'clusters')
+  
+  # get training and testing data
+  train_x <- reducedDim(sce_train, type = "VAE") %>%
+  mutate(cellTypes = as.factor(sce_train$clusters))
+  test_x <- reducedDim(sce_test, type = "VAE")
+  
+  # fit cell type classifier
+  test_cluster <- cellTypeClassifier(train_x, test_x, model = 'lda')
+  sce_test$clusters <- as.factor(test_cluster)
+  
+  # Compute training features
+  data_logit_train <- computeFeatures(sce = sce_train, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  row_names_train <- rownames(data_logit_train)
+  condition_train <- factor(clinical_data_train[match(row_names_train,clinical_data_train$sample_id),
+                                      "condition"])
+  colnames(data_logit_train) <- as.factor(colnames(data_logit_train))
+  markerMeanCellType_train <- computeFeatures(sce = sce_train, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  colnames(markerMeanCellType_train) <- as.factor(colnames(markerMeanCellType_train))
+  
+  # compute testing features
+   data_logit_test <- computeFeatures(sce = sce_test, featureType = 'prop', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  row_names_test <- rownames(data_logit_test)
+  condition_test <- factor(clinical_data_test[match(row_names_test,clinical_data_test$sample_id),
+                                      "condition"])
+  colnames(data_logit_test) <- as.factor(colnames(data_logit_test))
+  markerMeanCellType_test <- computeFeatures(sce = sce_test, featureType = 'mean', 
+                              cellTypeCol = 'clusters', sampleCol = 'sample_id', 
+                              logit = T, useMarkers = useMarkers)
+  colnames(markerMeanCellType_test) <- as.factor(colnames(markerMeanCellType_test))
+  
+  
+  # generate tree
+  trees <- generateTree(features = data_logit_train, method = "ward")
+  tree <- trees$tree
+  order <- trees$order
+  groups <- generateGroups(tree = tree, nClust = numClusters, 
+                         proportions = data_logit_train, 
+                         means = markerMeanCellType_train)
+  
+  
+  # Combine the feature matrices
+  X_train <- cbind(data_logit_train, markerMeanCellType_train) 
+    
+  # Scale the combined data
+  scaleVals <- preProcess(X_train, method = c('scale'))
+  X_train <- predict(scaleVals, X_train) %>%
+      as.matrix()
+    
+ # Extract response variable
+  y_train <- as.numeric(levels(condition_train))[condition_train]
+  # combine feature matrices for the test data
+  X_test <- cbind(data_logit_test, markerMeanCellType_test) %>%
+  as.matrix()
+  X_test <- predict(scaleVals, X_test)
+  y_test <- as.numeric(levels(condition_test))[condition_test]
+  
+  # Fit the overlap group lasso model
+  groups <- lapply(groups, sort)
+  fit <- fitModel(xTrain = X_train, yTrain = y_train, modelSummary = F,
+                groups = groups, penalty = "grLasso", seed = 1994)
+  
+  test_auc <- plotAUC(fit = fit$fit, xTest = X_test, 
+                      yTest = y_test, title = "")
+  return(test_auc)
+}
+```
+
+```{r}
+clusters <- seq(6,16)
+AUCs <- c()
+
+for(i in 1:length(clusters)){
+  numClusters <- clusters[i]
+  res <- runPredictionModel(sce_train = sce_norm, sce_test = sce_norm_test, numClusters = numClusters, 
+                          clinical_data_train = clinicaldata, clinical_data_test = clinicaldata_test)
+  
+  res$plot
+  AUCs[i] <- auc(res$preds$Truth, res$preds$Predicted) %>% round(2)
+}
+
+```
+
+# Generate line plot of results
+```{r}
+res_df <- data.frame(Cluster = clusters,
+                     AUC = AUCs, Dataset = rep("Wagner et al Breast Cancer", 11))
+
+write.csv(res_df,
+          '../data/breast_cancer_glasso_aucs_multi_cluster.csv')
+```
+
+
+```{r}
+ggplot(data=res_df, aes(x=Cluster, y=AUC)) +
+  geom_line()+
+  geom_point()
+```
+
