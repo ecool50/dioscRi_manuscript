@@ -12,34 +12,19 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 rm(list = ls())
 gc()
-suppressPackageStartupMessages({
-  library(keras3)
-  library(tensorflow)
-  library(tidyverse)
-  library(FuseSOM)
-  library(ggsci)
-  library(uwot)
-  library(data.table)
-  library(SingleCellExperiment)
-  library(caret)
-  library(ROCR)
-  library(psych)
-  library(tensorflow)
-  library(glmnet)
-  library(data.tree)
-  library(ggtree)
-  library(ape)
-  library(grpreg)
-  library(treekoR)
-  library(ggiraph)
-  library(scales)
-  library(ggnewscale)
-})
-files.sources = list.files(path = '../../bioheart_analysis/VaeTOF/VaeTOF/R/', full.names = T)
-sapply(files.sources, source)
-source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
-# source('~/Documents/PhD/bioheart_analysis/DeepLasso/scripts/deep_learning_helper_funcs.R')
-set_random_seed(1994)
+library(dioscRi)
+library(ggplot2)
+library(FuseSOM)
+library(SingleCellExperiment)
+library(tidyverse)
+library(data.table)
+library(data.tree)
+library(tensorflow)
+library(keras3)
+library(ROCR)
+library(psych)
+library(pROC)
+tensorflow::set_random_seed(1994)
 ```
 
 ```{r}
@@ -51,7 +36,7 @@ split_and_extract <- function(string, n) {
 
 
 ```{r}
-metaData <- read.csv('DeepLearning_metadata.csv')
+metaData <- read.csv('~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/cmv_metadata.csv')
 metaData <- metaData[, -1]
 
 metaData$sample_id <- lapply(metaData$name, split_and_extract)
@@ -63,8 +48,8 @@ useMarkers <- c("TCRGD", "IGD","HLADR", "CD94","CD85J","CD8","CD56",
 ```
 
 ```{r}
-load("Data/cmv_train_MMD_VAE_sce.RData")
-load("Data/cmv_test_MMD_VAE_sce.RData")
+load("~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/Data/cmv_train_MMD_VAE_sce.RData")
+load("~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/Data/cmv_test_MMD_VAE_sce.RData")
 ```
 
 # Set up clinical data
@@ -100,7 +85,7 @@ runPredictionModel <- function(sce_train, sce_test, numClusters,
   test_x <- reducedDim(sce_test, type = "VAE")
   
   # fit cell type classifier
-  test_cluster <- cellTypeClassifier(train_x, test_x, model = 'lda')
+  test_cluster <- trainCellTypeClassifier(trainX = train_x, testX = test_x, model = 'lda')
   sce_test$clusters <- as.factor(test_cluster)
   
   # Compute training features
@@ -165,7 +150,7 @@ runPredictionModel <- function(sce_train, sce_test, numClusters,
 ```
 
 ```{r}
-clusters <- seq(6,16)
+clusters <- seq(6,7)
 AUCs <- c()
 
 for(i in 1:length(clusters)){
@@ -183,15 +168,5 @@ for(i in 1:length(clusters)){
 ```{r}
 res_df <- data.frame(Cluster = clusters,
                      AUC = AUCs, Dataset = rep("CMV Study SDY519", 11))
-
-write.csv(res_df,
-          'cmv_glasso_aucs_multi_cluster.csv')
-```
-
-
-```{r}
-ggplot(data=res_df, aes(x=Cluster, y=AUC)) +
-  geom_line()+
-  geom_point()
 ```
 

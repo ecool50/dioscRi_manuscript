@@ -12,33 +12,14 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 rm(list = ls())
 gc()
-suppressPackageStartupMessages({
-  library(keras3)
-  library(tensorflow)
-  library(tidyverse)
-  library(FuseSOM)
-  library(ggsci)
-  library(uwot)
-  library(data.table)
-  library(SingleCellExperiment)
-  library(caret)
-  library(ROCR)
-  library(psych)
-  library(tensorflow)
-  library(glmnet)
-  library(data.tree)
-  library(ggtree)
-  library(ape)
-  library(grpreg)
-  library(treekoR)
-  library(ggiraph)
-  library(scales)
-  library(ggnewscale)
-})
-files.sources = list.files(path = '..//VaeTOF/VaeTOF/R/', full.names = T)
-sapply(files.sources, source)
-source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
-set_random_seed(1994)
+library(dioscRi)
+library(ggplot2)
+library(FuseSOM)
+library(SingleCellExperiment)
+library(tidyverse)
+library(data.table)
+library(data.tree)
+tensorflow::set_random_seed(1994)
 ```
 
 # Set the markers
@@ -48,33 +29,23 @@ useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27'
                 'CD196_CCR6',
                 'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
                 'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
-
-allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
-                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
-                'CD196_CCR6',
-                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
-                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
-                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
-                "CD45_108", "P2X7", "NOX5")
 ```
+
 # Update the markers
 ```{r}
 useMarkers <- gsub("_", "-", useMarkers)
-allMarkers <- gsub("_", "-", allMarkers)
 ```
 
 # Load the imubac normalised data
 ```{r}
-load('../sce_dat/bioheart_iMUBAC_batch_corrected.RData')
+load('../../../sce_dat/bioheart_iMUBAC_batch_corrected.RData')
 ```
 
 ## Subset the data
 ```{r, eval=T}
 sce_imubac_disc <- sce_imubac[, sce_imubac$batch == "4"]
 
-
 sce_imubac_val <- sce_imubac[, sce_imubac$batch == "3"]
-
 ```
 
 ## Use FuseSOM to cluster the normalised data
@@ -101,7 +72,8 @@ test_x <- assay(sce_imubac_val, "normexprs") %>%
 ```
 
 ```{r, eval=T}
-val_clusters <- cellTypeClassifier(trainData = train_x, testData = test_x, model = 'lda')
+val_clusters <- trainCellTypeClassifier(trainX = train_x, 
+                                        testX = test_x, model = 'lda')
 
 table(val_clusters)
 
@@ -116,9 +88,6 @@ clinicaldata <- colData(sce_imubac_disc) %>%
   dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
   distinct()
 
-encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
-clinicaldata <- cbind(clinicaldata, encoded_gender)
-
 ```
 
 ## Generate features
@@ -128,10 +97,6 @@ clinicaldata_val <- colData(sce_imubac_val) %>%
   as.data.frame() %>%
   dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
   distinct()
-
-encoded_gender_val <- model.matrix(~Gender-1, data=clinicaldata_val)
-clinicaldata_val <- cbind(clinicaldata_val, encoded_gender_val)
-clinicaldata_val$Gensini_bin <- as.factor(clinicaldata_val$Gensini_bin)
 ```
 
 # Compute training features
@@ -179,13 +144,6 @@ row_names_val <- rownames(data_val_logit)
 condition_val <- factor(clinicaldata_val[match(row_names_val,clinicaldata_val$sample_id),
                                       "Gensini_bin"])
 colnames(data_val_logit) <- as.factor(colnames(data_val_logit))
-
-Age <- clinicaldata_val[match(row_names_val,clinicaldata_val$sample_id),
-                                      "Age"]
-GenderM <- clinicaldata_val[match(row_names_val,clinicaldata_val$sample_id),
-                                      c("GenderM")]
-
-clinicaldata_info_val <- cbind(Age, GenderM)
 ```
 
 ## Means
@@ -213,17 +171,15 @@ root <- Node$new("Root")
     CD4 <- CD3$AddChild('CD4_logit')
       `CD4+ Tconv` <- CD4$AddChild('CD4+ Tconv_logit')
       `CD4+ Treg` <- CD4$AddChild('CD4+ Treg_logit')
-  # other <- root$AddChild('other_logit')
 ```
 
 # Generate grouping structures
 ```{r}
 nclust <- ncol(data_logit)
-# root <- as.phylo(root)
-order <- as.phylo(root)$tip.label
+order <- ape::as.phylo(root)$tip.label
+tree <- ggtree::ggtree(ape::as.phylo(root),ladderize = F, layout = 'dendrogram')
 
-tree <- treekoR:::findChildren(ggtree(as.phylo(root),
-                                            ladderize = F, layout = 'dendrogram'))
+tree <- dioscRi::findChildren(tree)
 
 groups <- generateGroups(tree = tree, nClust = nclust, 
                          proportions = data_logit, means = markerMeanCellType)
@@ -239,7 +195,7 @@ X_train <- cbind(data_logit, markerMeanCellType)
 scaleVals <- preProcess(X_train, method = c('scale'))
 X_train <- predict(scaleVals, X_train) %>%
     as.matrix()
-# X_train <- cbind(X_train, clinicaldata_info)
+
 # Extract response variable
 y_train <- as.numeric(levels(condition))[condition]
 ```
@@ -249,7 +205,6 @@ y_train <- as.numeric(levels(condition))[condition]
 X_test <- cbind(data_val_logit, markerMeanCellType_val) %>%
   as.matrix()
 X_test <- predict(scaleVals, X_test)
-# X_test <- cbind(X_test, clinicaldata_info_3)
 ```
 
 ## Fit Overlap model
@@ -263,18 +218,12 @@ fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups,
 y_test <- as.numeric(levels(condition_val))[condition_val]
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 - All AUC =")
 test_auc$plot
-
-write.csv(test_auc$preds,
-          '../dioscRi_manuscript/auc_data//mg_iMUBAC_auc_all_study_3.csv')
-
 ```
 
 # Visualise Resulting Tree
-```{r, fig.height=20, fig.width=40}
-p.all <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG",
+```{r, fig.height=10, fig.width=12}
+visualiseModelTree(fit = fit$fit, tree = tree, type = "MG",
                    trainingData = X_train, title = "Manual Gating")
-
-# ggsave(file="../Plots/fs_tree.svg", plot=p, width=18, height=16, dpi = 1200)
 ```
 
 # Look at just the proportions
@@ -289,7 +238,6 @@ X_train <- data_logit %>%
 ```{r}
 X_test <- data_val_logit %>%
   as.matrix()
-
 ```
 
 ```{r}
@@ -308,15 +256,11 @@ fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups,
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, 
                     title = "Study 3 - All AUC =")
 test_auc$plot
-
-write.csv(test_auc$preds,
-          '../dioscRi_manuscript/auc_data/mg_iMUBAC_auc_prop_study_3.csv')
-
 ```
 
 ## Look at tree plot
-```{r, fig.height=20, fig.width=40}
-p.prop <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", 
+```{r, fig.height=5, fig.width=6}
+visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", 
                    trainingData = X_train, heatmap = FALSE)
 ```
 
@@ -355,25 +299,12 @@ fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups,
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, 
                     title = "Study 3 - All AUC =")
 test_auc$plot
-
-write.csv(test_auc$preds,
-          '../dioscRi_manuscript/auc_data/mg_iMUBAC_auc_means_study_3.csv')
-
 ```
 
-```{r, fig.height=24, fig.width=40}
+```{r, fig.height=5, fig.width=6}
 order <- gsub("_logit", "", order)
 order <- gsub("_", " ", order)
-p.means <- plotHeatmap(fit$fit, type = "MG", order = order)
+plotHeatmap(fit$fit, type = "MG", order = order)
 ```
 
-```{r, fig.width=20, fig.height=12, eval=TRUE}
-pdf(file = "../dioscRi_manuscript/Plots/feature_trees_mg_iMUBAC.pdf",   # The directory you want to save the file in
-    width = 20, # The width of the plot in inches
-    height = 12) # The height of the plot in inches
-p.prop_mean <- cowplot::plot_grid(p.prop, p.means, nrow = 2, 
-                                  labels = LETTERS[1:2], align = "hv")
-cowplot::plot_grid(p.prop_mean, p.all, ncol = 2, labels = c("", "C"))
-dev.off()
-```
 

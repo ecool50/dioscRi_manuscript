@@ -168,13 +168,10 @@ fit <- fitModel(xTrain = X_train, yTrain = y_train,
 y_test <- as.numeric(levels(condition_test))[condition_test]
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Test set AUC =")
 test_auc$plot
-
-# write.csv(test_auc$preds,
-#           '../data/Covid_Bcell_dioscRi_aucs.csv')
 ```
 
 # Visualise Resulting Tree
-```{r, fig.height=10, fig.width=18}
+```{r, fig.height=10, fig.width=12}
 visualiseModelTree(fit = fit$fit, tree = tree, type = "cluster", 
                    trainingData = X_train)
 ```

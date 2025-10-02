@@ -12,34 +12,19 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 rm(list = ls())
 gc()
-suppressPackageStartupMessages({
-  library(keras3)
-  library(tensorflow)
-  library(tidyverse)
-  library(FuseSOM)
-  library(ggsci)
-  library(uwot)
-  library(data.table)
-  library(SingleCellExperiment)
-  library(caret)
-  library(ROCR)
-  library(psych)
-  library(tensorflow)
-  library(glmnet)
-  library(data.tree)
-  library(ggtree)
-  library(ape)
-  library(grpreg)
-  library(treekoR)
-  library(ggiraph)
-  library(scales)
-  library(ggnewscale)
-})
-files.sources = list.files(path = '../../../bioheart_analysis/VaeTOF/VaeTOF/R/', full.names = T)
-sapply(files.sources, source)
-source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
-# source('~/Documents/PhD/bioheart_analysis/DeepLasso/scripts/deep_learning_helper_funcs.R')
-set_random_seed(1994)
+library(dioscRi)
+library(ggplot2)
+library(FuseSOM)
+library(SingleCellExperiment)
+library(tidyverse)
+library(data.table)
+library(data.tree)
+library(tensorflow)
+library(keras3)
+library(ROCR)
+library(psych)
+library(pROC)
+tensorflow::set_random_seed(1994)
 ```
 
 # Load in data and compute the reference sample
@@ -51,7 +36,7 @@ useMarkers <- c("AKT","AR","BCL2","CA9", "CD24","CD44","CD49f", "cMET","cMYC",
                 "PRB","PTEN","SMA", "Survivin", "Vimentin"
                  )           
 
-metadata <- read.csv('../data/breast_cancer_metadata.csv')
+metadata <- read.csv('~/Documents/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data/breast_cancer_metadata.csv')
 
 metadata$dataset <- if_else(metadata$dataset == 'test', 'test', 'train')
 
@@ -59,8 +44,8 @@ metadata$dataset <- if_else(metadata$dataset == 'test', 'test', 'train')
 
 # Load normalised data
 ```{r}
-load('../data/breast_cancer_train_MMD_VAE_sce.RData')
-load('../data/breast_cancer_test_MMD_VAE_sce.RData')
+load('~/Documents/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data/breast_cancer_train_MMD_VAE_sce.RData')
+load('~/Documents/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data/breast_cancer_test_MMD_VAE_sce.RData')
 ```
 
 # Set up clinical data
@@ -104,7 +89,7 @@ runPredictionModel <- function(sce_train, sce_test, numClusters,
   test_x <- reducedDim(sce_test, type = "VAE")
   
   # fit cell type classifier
-  test_cluster <- cellTypeClassifier(train_x, test_x, model = 'lda')
+  test_cluster <- trainCellTypeClassifier(trainX = train_x, testX = test_x, model = 'lda')
   sce_test$clusters <- as.factor(test_cluster)
   
   # Compute training features
@@ -189,15 +174,6 @@ for(i in 1:length(clusters)){
 ```{r}
 res_df <- data.frame(Cluster = clusters,
                      AUC = AUCs, Dataset = rep("Wagner et al Breast Cancer", 11))
-
-write.csv(res_df,
-          '../data/breast_cancer_glasso_aucs_multi_cluster.csv')
 ```
 
-
-```{r}
-ggplot(data=res_df, aes(x=Cluster, y=AUC)) +
-  geom_line()+
-  geom_point()
-```
 

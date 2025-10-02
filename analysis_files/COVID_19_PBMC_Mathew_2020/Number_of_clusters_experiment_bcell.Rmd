@@ -12,44 +12,26 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 rm(list = ls())
 gc()
-suppressPackageStartupMessages({
-  library(keras3)
-  library(tensorflow)
-  library(tidyverse)
-  library(FuseSOM)
-  library(ggsci)
-  library(uwot)
-  library(data.table)
-  library(SingleCellExperiment)
-  library(caret)
-  library(ROCR)
-  library(psych)
-  library(tensorflow)
-  library(glmnet)
-  library(data.tree)
-  library(ggtree)
-  library(ape)
-  library(grpreg)
-  library(treekoR)
-  library(ggiraph)
-  library(scales)
-  library(ggnewscale)
-})
-files.sources = list.files(path = '../../../bioheart_analysis/VaeTOF/VaeTOF/R/', full.names = T)
-sapply(files.sources, source)
-source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
-# source('~/Documents/PhD/bioheart_analysis/DeepLasso/scripts/deep_learning_helper_funcs.R')
-setwd('~/Documents/PhD/DeepLearning_CyTOF/COVID_19_PBMC_Mathew_2020/')
-set_random_seed(1994)
+library(dioscRi)
+library(ggplot2)
+library(FuseSOM)
+library(SingleCellExperiment)
+library(tidyverse)
+library(data.table)
+library(data.tree)
+library(tensorflow)
+library(keras3)
+library(ROCR)
+library(psych)
+library(pROC)
+tensorflow::set_random_seed(1994)
 ```
 
 # Load in data and compute the reference sample
 ```{r}
-metadata <- read.csv('../data/Covid_Bcell_metadata.csv')
+metadata <- read.csv('~/Documents/PhD/DeepLearning_CyTOF/COVID_19_PBMC_Mathew_2020/data/Covid_Bcell_metadata.csv')
 metadata$time_days <- factor(metadata$time_days)
 
-# CD45RA, PD-1, CXCR5, TCF-1, CD38, CD95, Eomes, CCR7, KI67, CD16, CD27, 
-# CX3CR1, CD39, CD20, T-bet, and HLA-DR
 useMarkers <- c("CD45RA.BUV395","PD.1.BV421","CXCR5.BB515","TCF.1.AF647", 
                 "CD38.BUV661","CD39.APCFire750","CD95.BV650", "Eomes.PEef610",
                 "CCR7.BB700", "Ki.67.AF700","CD16.BUV615", "CD27.BUV737",
@@ -59,8 +41,8 @@ useMarkers <- c("CD45RA.BUV395","PD.1.BV421","CXCR5.BB515","TCF.1.AF647",
 
 # Load normalised data
 ```{r}
-load('../data/bcell_down_sampled_train_MMD_VAE_sce.RData')
-load('../data/bcell_down_sampled_test_MMD_VAE_sce.RData')
+load('~/Documents/PhD/DeepLearning_CyTOF/COVID_19_PBMC_Mathew_2020//data/bcell_down_sampled_train_MMD_VAE_sce.RData')
+load('~/Documents/PhD/DeepLearning_CyTOF/COVID_19_PBMC_Mathew_2020//data/bcell_down_sampled_test_MMD_VAE_sce.RData')
 ```
 
 # Create functions to run the prediction models
@@ -77,7 +59,7 @@ runPredictionModel <- function(sce_train, sce_test, numClusters,
   test_x <- reducedDim(sce_test, type = "VAE")
   
   # fit cell type classifier
-  test_cluster <- cellTypeClassifier(train_x, test_x, model = 'lda')
+  test_cluster <- trainCellTypeClassifier(trainX = train_x, testX = test_x, model = 'lda')
   sce_test$clusters <- as.factor(test_cluster)
   
   # Compute training features
@@ -186,15 +168,5 @@ for(i in 1:length(clusters)){
 ```{r}
 res_df <- data.frame(Cluster = clusters,
                      AUC = AUCs, Dataset = rep("Mathew et al COVID−19", 11))
-
-write.csv(res_df,
-          '../data/bcell_dioscRi_aucs_multi_cluster.csv')
-```
-
-
-```{r}
-ggplot(data=res_df, aes(x=Cluster, y=AUC)) +
-  geom_line()+
-  geom_point()
 ```
 

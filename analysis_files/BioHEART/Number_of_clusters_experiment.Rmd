@@ -12,34 +12,19 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 rm(list = ls())
 gc()
-suppressPackageStartupMessages({
-  library(keras3)
-  library(tensorflow)
-  library(tidyverse)
-  library(FuseSOM)
-  library(ggsci)
-  library(uwot)
-  library(data.table)
-  library(SingleCellExperiment)
-  library(caret)
-  library(ROCR)
-  library(psych)
-  library(tensorflow)
-  library(glmnet)
-  library(data.tree)
-  library(ggtree)
-  library(ape)
-  library(grpreg)
-  library(treekoR)
-  library(ggiraph)
-  library(scales)
-  library(ggnewscale)
-})
-files.sources = list.files(path = '../../VaeTOF/VaeTOF/R/', full.names = T)
-sapply(files.sources, source)
-source('~/Documents/PhD/bioheart_analysis/old_scripts/estimate.ED.R')
-# source('~/Documents/PhD/bioheart_analysis/DeepLasso/scripts/deep_learning_helper_funcs.R')
-set_random_seed(1994)
+library(dioscRi)
+library(ggplot2)
+library(FuseSOM)
+library(SingleCellExperiment)
+library(tidyverse)
+library(data.table)
+library(data.tree)
+library(tensorflow)
+library(keras3)
+library(ROCR)
+library(psych)
+library(pROC)
+tensorflow::set_random_seed(1994)
 ```
 
 # load both studies
@@ -56,26 +41,17 @@ useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27'
                 'CD196_CCR6',
                 'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
                 'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
-
-allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
-                'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',
-                'CD196_CCR6',
-                'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7', 'CD19', 'CD20',
-                'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE', "CD11b", "CD253_TRAIL",
-                "CD34", "CD61", "CD11c", "eNOS", "LOX_1", "CD86", "CD16", "CD45_106",
-                "CD45_108", "P2X7", "NOX5")
 ```
 # Update the markers
 ```{r}
 useMarkers <- gsub("_", "-", useMarkers)
-allMarkers <- gsub("_", "-", allMarkers)
 ```
 
 
 # Load normalised data
 ```{r}
-load('../../sce_dat/study_4_MMD_VAE_updated.RData')
-load('../../sce_dat/study_3_MMD_VAE_updated.RData')
+load('../../../sce_dat/study_4_MMD_VAE_updated.RData')
+load('../../../sce_dat/study_3_MMD_VAE_updated.RData')
 ```
 
 
@@ -86,9 +62,6 @@ clinicaldata <- colData(sce_norm) %>%
   dplyr::select(sample_id, Gensini, Gender, Age) %>%
   distinct()
 clinicaldata$Gensini_bin <- factor(if_else(clinicaldata$Gensini > 0, 1, 0))
-
-encoded_gender <- model.matrix(~Gender-1, data=clinicaldata)
-clinicaldata <- cbind(clinicaldata, encoded_gender)
 ```
 
 # testing clinical data
@@ -97,10 +70,6 @@ clinicaldata_3 <- colData(sce_3_norm) %>%
   as.data.frame() %>%
   dplyr::select(sample_id, Gensini_bin, Gender, Age) %>%
   distinct()
-
-encoded_gender_3 <- model.matrix(~Gender-1, data=clinicaldata_3)
-clinicaldata_3 <- cbind(clinicaldata_3, encoded_gender_3)
-clinicaldata_3$Gensini_bin <- as.factor(clinicaldata_3$Gensini_bin)
 ```
 
 # Create functions to run the prediction models
@@ -117,7 +86,7 @@ runPredictionModel <- function(sce_train, sce_test, numClusters,
   test_x <- reducedDim(sce_test, type = "VAE")
   
   # fit cell type classifier
-  test_cluster <- cellTypeClassifier(train_x, test_x, model = 'lda')
+  test_cluster <- trainCellTypeClassifier(trainX = train_x, testX = test_x, model = 'lda')
   sce_test$clusters <- as.factor(test_cluster)
   
   # Compute training features
@@ -201,15 +170,6 @@ for(i in 1:length(clusters)){
 ```{r}
 res_df <- data.frame(Cluster = clusters,
                      AUC = AUCs, Dataset = rep("BioHEART-CT", 11))
-
-write.csv(res_df,
-          '../auc_data/fs_dioscRi_auc_all_study_multi_cluster.csv')
 ```
 
-
-```{r}
-ggplot(data=res_df, aes(x=Cluster, y=AUC)) +
-  geom_line()+
-  geom_point()
-```
 

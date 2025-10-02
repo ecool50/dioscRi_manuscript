@@ -12,13 +12,19 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 rm(list = ls())
 gc()
-suppressPackageStartupMessages({
-  library(tidyverse)
-  library(FuseSOM)
-  library(data.table)
-  library(SingleCellExperiment)
-  library(dioscRi)
-})
+library(dioscRi)
+library(ggplot2)
+library(FuseSOM)
+library(SingleCellExperiment)
+library(tidyverse)
+library(data.table)
+library(data.tree)
+library(tensorflow)
+library(keras3)
+library(ROCR)
+library(psych)
+library(pROC)
+tensorflow::set_random_seed(1994)
 ```
 
 # Load in data and compute the reference sample
@@ -66,6 +72,7 @@ table(test_clusters)
 
 sce_norm_test$clusters <- test_clusters
 ```
+
 # Set up clinical data
 ## Training
 ```{r}
@@ -92,7 +99,6 @@ clinicaldata_test$sample_id <- as.character(clinicaldata_test$sample_id)
 clinicaldata_test$condition <- factor(if_else(clinicaldata_test$condition == "T", 1, 0))
 sce_norm_test$sample_id <- sce_norm_test$file_name
 ```
-
 
 # Compute training features
 ## Proportions
@@ -177,12 +183,10 @@ fit <- fitModel(xTrain = X_train, yTrain = y_train,
 y_test <- as.numeric(levels(condition_test))[condition_test]
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Test set AUC =")
 test_auc$plot
-
-# write.csv(test_auc$preds,
-#           '../data/breast_cancer_dioscRi_aucs.csv')
 ```
+
 # Visualise Resulting Tree
-```{r, fig.height=10, fig.width=18}
+```{r, fig.height=10, fig.width=12}
 visualiseModelTree(fit = fit$fit, tree = tree, type = "cluster", 
                    trainingData = X_train)
 ```
