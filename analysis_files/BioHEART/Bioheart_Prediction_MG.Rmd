@@ -35,6 +35,7 @@ suppressPackageStartupMessages({
   library(ggiraph)
   library(scales)
   library(ggnewscale)
+    library(dioscRi)
 })
 files.sources = list.files(path = '../VaeTOF/VaeTOF/R/', full.names = T)
 sapply(files.sources, source)
@@ -66,11 +67,34 @@ allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27'
                 "CD45_108", "P2X7", "NOX5")
 ```
 
+
+
+
 # Load normalised data
 ```{r}
-load('../sce_dat/study_4_MMD_VAE_updated.RData')
-load('../sce_dat/study_3_MMD_VAE_updated.RData')
+load('../../../Analysis_data/sce_objects/BioHEART/study_4_MMD_VAE_updated.RData')
+load('../../../Analysis_data/sce_objects/BioHEART/study_3_MMD_VAE_updated.RData')
 ```
+
+```{r}
+df_raw <- cbind(colData(sce_norm), t(as.matrix(assay(sce_norm, "raw")))) %>%
+    as.data.frame()
+```
+
+```{r}
+df_raw %>% filter(mg_cell_type_distinct == "CD4+ Treg") %>% 
+    ggplot(aes(y = CD14, x = as.factor(gensini_bin))) + 
+    geom_boxplot()
+```
+
+```{r, eval=FALSE}
+colData <- as.data.frame(SummarizedExperiment::colData(sce_norm))
+markerData <- colData %>% dplyr::select(sample_id = "sample_id", 
+            "mg_cell_type_distinct") %>% cbind(data.frame(t(SummarizedExperiment::assay(sce_norm, 
+            assay)), check.names = FALSE)) %>% dplyr::select(sample_id, 
+            "mg_cell_type_distinct", useMarkers)
+```
+
 
 # Update the markers
 ```{r}
@@ -93,7 +117,7 @@ ggplotify::as.ggplot(scater::plotGroupedHeatmap(sce_norm_sub,
                            cluster_rows = FALSE)) + 
   # theme_bw() +
   # theme_minimal() +
-  ggtitle(label = "Heatmap of normalised manually gated clusters expression") +
+  ggtitle(label = "Training manually gated clusters expression") +
     theme(
           plot.title = element_text(size = 20, hjust = 0.5, face = "bold")
     )
@@ -119,7 +143,8 @@ test_x <- reducedDim(sce_3_norm, type = "VAE") %>%
 
 ## Fit SVM model
 ```{r, eval=T}
-df_3_clusters <- cellTypeClassifier(trainData = train_x, testData = test_x, model = 'lda')
+df_3_clusters <- dioscRi::trainCellTypeClassifier(trainX = train_x, 
+                                                  testX = test_x, model = 'lda')
 
 table(df_3_clusters)
 
@@ -164,6 +189,7 @@ clinicaldata_3$Gensini_bin <- as.factor(clinicaldata_3$Gensini_bin)
 sce_norm <- sce_norm[, sce_norm$mg_cell_type_distinct != "other"]
 sce_norm <- sce_norm[, sce_norm$mg_cell_type_distinct != ""]
 # sce_norm$mg_cell_type_distinct <- droplevels(sce_norm$mg_cell_type_distinct)
+
 data_logit <- computeFeatures(sce = sce_norm, featureType = 'prop', 
                               cellTypeCol = 'mg_cell_type_distinct', 
                               sampleCol = 'sample_id', 
@@ -305,8 +331,8 @@ train_auc$plot
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 MG - All AUC =")
 test_auc$plot
 
-write.csv(test_auc$preds,
-          '../dioscRi_manuscript/auc_data/mg_dioscRi_auc_all_study_3.csv')
+# write.csv(test_auc$preds,
+#           '../dioscRi_manuscript/auc_data/mg_dioscRi_auc_all_study_3.csv')
 
 ```
 
@@ -318,11 +344,11 @@ write.csv(test_auc$preds,
 p.all <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", trainingData = X_train,
                    nodesToRemove =  c("Root", "Myeloid", "CD3", "CD4"), title = "Proportions + Marker Means")
 
-pdf(file = "../dioscRi_manuscript/Plots/Figure_3_tree_full_manual_gating.pdf",   # The directory you want to save the file in
-    width = 12, # The width of the plot in inches
-    height = 10) # The height of the plot in inches
-    p.all 
-dev.off()
+# pdf(file = "../dioscRi_manuscript/Plots/Figure_3_tree_full_manual_gating.pdf",   # The directory you want to save the file in
+#     width = 12, # The width of the plot in inches
+#     height = 10) # The height of the plot in inches
+#     p.all 
+# dev.off()
 # dev.off()
 # ggsave(file="../Plots/mg_tree.svg", plot=p, width=18, height=16, dpi = 1200)
 ```
@@ -334,7 +360,9 @@ stats_mean <- getSigFeatures(fit$fit, type = 'mean',
                          outcome = "Gensini_bin")
 
 sigFeatures <- stats_mean$sigFeatures
-# stats <- stats_mean$stats[stats_mean$stats$p < 0.05, ]
+stats <- stats_mean$stats
+
+# save(stats_mean, file = "../../../discovery_cohort_sig_stats_mg.rda")
 
 
 
@@ -394,8 +422,8 @@ fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups,
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 MG - All AUC =")
 test_auc$plot
 # 
-write.csv(test_auc$preds,
-          '../auc_data/mg_dioscRi_auc_prop_study_3.csv')
+# write.csv(test_auc$preds,
+#           '../auc_data/mg_dioscRi_auc_prop_study_3.csv')
 
 ```
 
@@ -404,11 +432,11 @@ write.csv(test_auc$preds,
 p.prop <- visualiseModelTree(fit = fit$fit, tree = tree, type = "MG", trainingData = X_train,
                    nodesToRemove =  c("Root", "Myeloid", "CD3", "CD4"), heatmap = FALSE)
 
-pdf(file = "../dioscRi_manuscript/Plots/Figure_3_tree_prop_manual_gating.pdf",   # The directory you want to save the file in
-    width = 12, # The width of the plot in inches
-    height = 10) # The height of the plot in inches
-    p.prop 
-dev.off()
+# pdf(file = "../dioscRi_manuscript/Plots/Figure_3_tree_prop_manual_gating.pdf",   # The directory you want to save the file in
+#     width = 12, # The width of the plot in inches
+#     height = 10) # The height of the plot in inches
+#     p.prop 
+# dev.off()
 ```
 
 ```{r, eval=T, fig.height=10, fig.width=16, eval=FALSE}
@@ -461,8 +489,8 @@ fit <- fitModel(xTrain = X_train, yTrain = y_train, groups = groups,
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = y_test, title = "Study 3 MG - All AUC =")
 test_auc$plot
 
-write.csv(test_auc$preds,
-          '../auc_data/mg_dioscRi_auc_means_study_3.csv')
+# write.csv(test_auc$preds,
+#           '../auc_data/mg_dioscRi_auc_means_study_3.csv')
 
 
 
@@ -474,11 +502,11 @@ order <- gsub("_logit", "", order)
 order <- gsub("_", " ", order)
 p.means <- plotHeatmap(fit$fit, type = "MG", order = order)
 
-pdf(file = "../dioscRi_manuscript/Plots/Figure_3_tree_means_manual_gating.pdf",   # The directory you want to save the file in
-    width = 12, # The width of the plot in inches
-    height = 8) # The height of the plot in inches
-    p.means 
-dev.off()
+# pdf(file = "../dioscRi_manuscript/Plots/Figure_3_tree_means_manual_gating.pdf",   # The directory you want to save the file in
+#     width = 12, # The width of the plot in inches
+#     height = 8) # The height of the plot in inches
+#     p.means 
+# dev.off()
 ```
 
 ```{r, eval=T, fig.height=14, fig.width=20, eval=FALSE}
@@ -532,9 +560,9 @@ stats_mean_3 <- getSigFeatures(fit$fit, type = 'mean',
                          outcome = "Gensini_bin")
 
 sigFeatures_3 <- stats_mean_3$sigFeatures
-stats_3 <- stats_mean$stats[stats_mean_3$stats$p.adj < 0.05, ]
+stats_3 <- stats_mean$stats
 
 
 
-plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin")
+plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin", type = "boxplots")
 ```

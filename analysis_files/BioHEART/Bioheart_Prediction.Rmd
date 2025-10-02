@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 rm(list = ls())
 gc()
 library(dioscRi)
-set_random_seed(1994)
+# set_random_seed(1994)
 ```
 
 # load both studies
@@ -43,14 +43,14 @@ allMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27'
 ```{r}
 useMarkers <- gsub("_", "-", useMarkers)
 allMarkers <- gsub("_", "-", allMarkers)
-cluster_col <- "clusters_norm"
+cluster_col <- "clusters_11"
 ```
 
 
 # Load normalised data
 ```{r}
-load('../sce_dat/study_4_MMD_VAE_updated.RData')
-load('../sce_dat/study_3_MMD_VAE_updated.RData')
+load('../../../sce_dat/study_4_MMD_VAE_updated.RData')
+load('../../../sce_dat/study_3_MMD_VAE_updated.RData')
 ```
 
 ## Use FuseSOM to cluster the normalised data
@@ -89,7 +89,7 @@ df_norm <- assay(sce_norm, type = "norm") %>%
   t() %>%
   as.data.frame() %>%
   # mutate(cellTypes = sce_norm$mg_cell_type_distinct) %>%
-  mutate(predicted_norm = sce_norm$clusters_norm)
+  mutate(predicted_norm = sce_norm$clusters_11)
   # mutate(predicted_raw = sce_norm$clusters_raw) %>%
   # mutate(sample_id = sce_norm$sample_id)
 ```
@@ -157,32 +157,38 @@ df_norm_melted <- melt(df_norm) %>%
 clusters <- unique(df_norm_melted$predicted_norm) %>%
   as.character()
 
+sce_norm$clusters_11 <- factor(
+  sce_norm$clusters_11,
+  levels = c("cluster_5","cluster_7","cluster_3","cluster_6","cluster_9",
+             "cluster_10","cluster_8","cluster_11","cluster_2","cluster_1","cluster_4")
+)
 
 p <- ggplotify::as.ggplot(scater::plotGroupedHeatmap(sce_norm, 
-                           features = useMarkers, 
+                           features = useMarkers[order(useMarkers)], 
                            group = cluster_col, 
                            block = cluster_col,
                            exprs_values = "norm",
                            center = TRUE, 
                            scale = TRUE, 
-                           zlim = c(-2,2),
-                           cluster_rows = FALSE)) + 
+                           zlim = c(-3,3),
+                           cluster_rows = FALSE,
+                           cluster_cols = FALSE)) + 
   # theme_bw() +
   # theme_minimal() +
-  ggtitle(label = "Heatmap of normalised clusters expression") +
+  ggtitle(label = "Heatmap of unsupervised clustering clusters expression") +
     theme(
           plot.title = element_text(size = 20, hjust = 0.5, face = "bold")
     )
 
-pdf(file = "../Plots/Clusters_13_expression_plots.pdf",   # The directory you want to save the file in
-    width = 16, # The width of the plot in inches
-    height = 10) # The height of the plot in inches
+pdf(file = "../../Plots/Supp_Figure_2_heatmap.pdf",   # The directory you want to save the file in
+    width = 8, # The width of the plot in inches
+    height = 5) # The height of the plot in inches
 
 plot(p)
 
-for(cluster in clusters){
-  plotExpBox(df_norm_melted, cluster = cluster)
-}
+# for(cluster in clusters){
+#   plotExpBox(df_norm_melted, cluster = cluster)
+# }
 
 dev.off()
 ```
@@ -442,6 +448,7 @@ stats_mean <- getSigFeatures(fit$fit, type = 'mean',
 sigFeatures <- stats_mean$sigFeatures
 stats <- stats_mean$stats
 
+# save(stats_mean, file = "../../../discovery_cohort_sig_stats_unsupervised.rda")
 
 
 plotSigFeatures(stats = stats, sigFeatures = sigFeatures, outcome = "Gensini bin")
