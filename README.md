@@ -14,7 +14,7 @@ Each subfolder in `Analysis_files` contains scripts to reproduce specific analys
 
 ## Data Availability
 
-The raw and processed data required for these analyses is available at [Zenodod](https://zenodo.org/records/15694581).
+The raw and processed data required for these analyses is available at [Zenodo](https://zenodo.org/records/15694581).
 
 ## Installation
 
