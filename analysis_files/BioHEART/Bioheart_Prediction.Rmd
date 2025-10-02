@@ -60,38 +60,6 @@ sce_norm <- runFuseSOM(sce_norm, numClusters = nclust, assay = 'norm',
 # sce_norm$clusters <- sce_temp$clusters
 ```
 
-# Annotate clustering with Helen's annotations
-```{r, eval=F}
-# sce_norm <- sce_norm[, sce_norm$mg_cell_type_distinct != "other"]
-# sce_norm <- sce_norm[, sce_norm$mg_cell_type_distinct != ""]
-
-sce_norm$clusters_norm <- recode_factor(sce_norm$clusters_norm,
-                                 "cluster_1" = "NK", # NK Cells
-                                 "cluster_2" = "Not Naive CD8+ T cells", # Not Naive CD8+ T cells
-                                 "cluster_3" = "Naive CD8+ T cells", # Naive CD8+ T cells
-                                 "cluster_4" = "NK/Mixed", # NK Cells
-                                 "cluster_5" = "Naive B Cells", # mix of monocytes and dendritic cells
-                                 "cluster_6" = "CD4+ Tconv", # mix of naïve CD4+ T cells, B cells and NK cells
-                                 "cluster_7" = "Memory B cells", # B cells
-                                 "cluster_8" = "16+ monocytes", # NK cells
-                                 "cluster_9" = "CD141+ DC/pDCs", # central memory CD8+ T cells
-                                 "cluster_10" = "14+ monocytes", # naïve CD8+ T cells
-                                 "cluster_11" = "CD4+ Treg" # terminal effector memory revertant CD8+ T cells
-                                 )
-```
-
-# Look at the clustering performance per sample
-```{r}
-df_norm <- assay(sce_norm, type = "norm") %>%
-  t() %>%
-  as.data.frame() %>%
-  # mutate(cellTypes = sce_norm$mg_cell_type_distinct) %>%
-  mutate(predicted_norm = sce_norm$clusters_11)
-  # mutate(predicted_raw = sce_norm$clusters_raw) %>%
-  # mutate(sample_id = sce_norm$sample_id)
-```
-
-
 # Train clustering model with Caret
 ## Select training and testing data
 ```{r}
