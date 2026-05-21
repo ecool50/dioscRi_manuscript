@@ -46,8 +46,8 @@ cluster_col <- "clusters_11"
 
 # Load normalised data
 ```{r}
-load('../../../sce_dat/study_4_MMD_VAE_updated.RData')
-load('../../../sce_dat/study_3_MMD_VAE_updated.RData')
+load('../../../data/sce_dat/study_4_MMD_VAE_updated.RData')
+load('../../../data/sce_dat/study_3_MMD_VAE_updated.RData')
 ```
 
 ## Use FuseSOM to cluster the normalised data
