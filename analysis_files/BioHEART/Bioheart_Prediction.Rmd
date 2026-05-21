@@ -231,6 +231,7 @@ groups <- lapply(groups, sort)
 fit <- fitModel(xTrain = X_train, yTrain = y_train, modelSummary = F,
                 groups = groups, penalty = "grLasso", seed = 1994)
 ```
+
 ## Predict on test data
 ```{r}
 test_auc <- plotAUC(fit = fit$fit, xTest = X_test, yTest = condition_3, title = "Study 3 - All AUC =")

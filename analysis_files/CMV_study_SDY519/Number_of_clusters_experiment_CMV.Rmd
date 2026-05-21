@@ -5,6 +5,12 @@ date: "2024-10-10"
 output: html_document
 ---
 
+
+```{r config, include=FALSE}
+# External data location. Override with the DEEPLEARNING_CYTOF_ROOT environment variable.
+external_data_root <- Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
+                                 unset = "~/Documents/PhD/DeepLearning_CyTOF")
+```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -36,7 +42,7 @@ split_and_extract <- function(string, n) {
 
 
 ```{r}
-metaData <- read.csv('~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/cmv_metadata.csv')
+metaData <- read.csv(file.path(external_data_root, 'DeepLearningCyTOF/cmv_metadata.csv'))
 metaData <- metaData[, -1]
 
 metaData$sample_id <- lapply(metaData$name, split_and_extract)
@@ -48,8 +54,8 @@ useMarkers <- c("TCRGD", "IGD","HLADR", "CD94","CD85J","CD8","CD56",
 ```
 
 ```{r}
-load("~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/Data/cmv_train_MMD_VAE_sce.RData")
-load("~/Documents/PhD/DeepLearning_CyTOF/DeepLearningCyTOF/Data/cmv_test_MMD_VAE_sce.RData")
+load(file.path(external_data_root, "DeepLearningCyTOF/Data/cmv_train_MMD_VAE_sce.RData"))
+load(file.path(external_data_root, "DeepLearningCyTOF/Data/cmv_test_MMD_VAE_sce.RData"))
 ```
 
 # Set up clinical data

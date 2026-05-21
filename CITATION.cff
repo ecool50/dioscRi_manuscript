@@ -1,0 +1,70 @@
+cff-version: 1.2.0
+message: >-
+  This repository contains the analysis code and reproduction materials for
+  the dioscRi manuscript. If you use this code or its outputs, please cite
+  the manuscript.
+type: software
+title: "dioscRi manuscript: analysis code and reproduction materials"
+abstract: >-
+  Analysis notebooks, revision scripts, response materials, and supplementary
+  figures for the manuscript "dioscRi enables transferable prediction of
+  clinical outcomes in multi-parameter cytometry data". Companion repository
+  to the dioscRi R package (https://github.com/ecool50/dioscRi).
+authors:
+  - family-names: Willie
+    given-names: Elijah
+    affiliation: "The University of Sydney"
+  - family-names: Rao
+    given-names: Shreya
+    affiliation: "The University of Sydney"
+  - family-names: Figtree
+    given-names: Gemma
+    affiliation: "The University of Sydney / Kolling Institute"
+  - family-names: Yang
+    given-names: Jean
+    affiliation: "The University of Sydney"
+  - family-names: "Fazekas de St Groth"
+    given-names: Barbara
+    affiliation: "The University of Sydney"
+  - family-names: McGuire
+    given-names: Helen
+    affiliation: "The University of Sydney"
+  - family-names: Patrick
+    given-names: Ellis
+    affiliation: "The University of Sydney"
+    email: ellis.patrick@sydney.edu.au
+license: GPL-3.0
+repository-code: "https://github.com/ecool50/dioscRi_manuscript"
+url: "https://github.com/ecool50/dioscRi_manuscript"
+keywords:
+  - cytometry
+  - mass-cytometry
+  - flow-cytometry
+  - deep-learning
+  - variational-autoencoder
+  - group-lasso
+  - clinical-prediction
+  - immunology
+  - reproducibility
+version: "1.0.0"
+date-released: "TBD-on-acceptance"
+preferred-citation:
+  type: article
+  title: "dioscRi enables transferable prediction of clinical outcomes in multi-parameter cytometry data"
+  authors:
+    - family-names: Willie
+      given-names: Elijah
+    - family-names: Rao
+      given-names: Shreya
+    - family-names: Figtree
+      given-names: Gemma
+    - family-names: Yang
+      given-names: Jean
+    - family-names: "Fazekas de St Groth"
+      given-names: Barbara
+    - family-names: McGuire
+      given-names: Helen
+    - family-names: Patrick
+      given-names: Ellis
+  journal: "TBD"
+  year: 2026

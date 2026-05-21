@@ -1,0 +1,25 @@
+"ablation","assay","hierarchy","model","features","auc","ci_lower","ci_upper","is_full"
+"Norm + Hierarchy + GroupLasso + both","norm",TRUE,"grLasso","both",0.825,0.699970238095238,0.934523809523809,TRUE
+"Raw + Hierarchy + GroupLasso + both","raw",TRUE,"grLasso","both",0.716666666666667,0.579732142857143,0.839285714285714,FALSE
+"Norm + Flat + GroupLasso + both","norm",FALSE,"grLasso","both",0.825,0.699970238095238,0.934523809523809,FALSE
+"Raw + Flat + GroupLasso + both","raw",FALSE,"grLasso","both",0.716666666666667,0.579732142857143,0.839285714285714,FALSE
+"Norm + Hierarchy + ElasticNet + both","norm",TRUE,"elasticnet","both",0.826190476190476,0.70235119047619,0.934583333333333,FALSE
+"Raw + Hierarchy + ElasticNet + both","raw",TRUE,"elasticnet","both",0.723809523809524,0.585684523809524,0.85,FALSE
+"Norm + Flat + ElasticNet + both","norm",FALSE,"elasticnet","both",0.826190476190476,0.70235119047619,0.934583333333333,FALSE
+"Raw + Flat + ElasticNet + both","raw",FALSE,"elasticnet","both",0.723809523809524,0.585684523809524,0.85,FALSE
+"Norm + Hierarchy + GroupLasso + prop","norm",TRUE,"grLasso","prop",0.780952380952381,0.646428571428572,0.895238095238095,FALSE
+"Raw + Hierarchy + GroupLasso + prop","raw",TRUE,"grLasso","prop",0.660714285714286,0.517827380952381,0.800029761904762,FALSE
+"Norm + Flat + GroupLasso + prop","norm",FALSE,"grLasso","prop",0.775,0.636875,0.891666666666667,FALSE
+"Raw + Flat + GroupLasso + prop","raw",FALSE,"grLasso","prop",0.663095238095238,0.519047619047619,0.80125,FALSE
+"Norm + Hierarchy + ElasticNet + prop","norm",TRUE,"elasticnet","prop",0.777380952380953,0.641666666666667,0.892857142857143,FALSE
+"Raw + Hierarchy + ElasticNet + prop","raw",TRUE,"elasticnet","prop",0.682142857142857,0.541666666666667,0.822678571428571,FALSE
+"Norm + Flat + ElasticNet + prop","norm",FALSE,"elasticnet","prop",0.777380952380953,0.641666666666667,0.892857142857143,FALSE
+"Raw + Flat + ElasticNet + prop","raw",FALSE,"elasticnet","prop",0.682142857142857,0.541666666666667,0.822678571428571,FALSE
+"Norm + Hierarchy + GroupLasso + mean","norm",TRUE,"grLasso","mean",0.721428571428572,0.588095238095238,0.844047619047619,FALSE
+"Raw + Hierarchy + GroupLasso + mean","raw",TRUE,"grLasso","mean",0.6,0.457142857142857,0.739285714285714,FALSE
+"Norm + Flat + GroupLasso + mean","norm",FALSE,"grLasso","mean",0.721428571428572,0.588095238095238,0.844047619047619,FALSE
+"Raw + Flat + GroupLasso + mean","raw",FALSE,"grLasso","mean",0.6,0.457142857142857,0.739285714285714,FALSE
+"Norm + Hierarchy + ElasticNet + mean","norm",TRUE,"elasticnet","mean",0.726190476190476,0.594047619047619,0.851220238095238,FALSE
+"Raw + Hierarchy + ElasticNet + mean","raw",TRUE,"elasticnet","mean",0.622619047619047,0.478541666666667,0.757142857142857,FALSE
+"Norm + Flat + ElasticNet + mean","norm",FALSE,"elasticnet","mean",0.726190476190476,0.594047619047619,0.851220238095238,FALSE
+"Raw + Flat + ElasticNet + mean","raw",FALSE,"elasticnet","mean",0.622619047619047,0.478541666666667,0.757142857142857,FALSE

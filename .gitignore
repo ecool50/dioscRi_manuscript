@@ -1,0 +1,31 @@
+# This repository is code + data only.
+# Manuscript LaTeX source, response materials, and other write-up
+# artefacts are deliberately excluded.
+
+# Manuscript LaTeX source
+dioscRi_Manuscript_latex/
+
+# Response letter, reviewer plans, supervisor-edited docs, revision tex/pdf
+revision/docs/
+
+# Generated figures (manuscript/response artefacts; regenerable from scripts + data)
+revision/figures/
+
+# Introduction / writing drafts kept locally only
+dioscRi_introduction*.Rmd
+
+# Generated docs / backups
+*.bak
+
+# OS metadata
+.DS_Store
+**/.DS_Store
+
+# LaTeX build artefacts (in case any leak into the repo)
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.synctex.gz

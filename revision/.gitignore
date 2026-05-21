@@ -1,0 +1,14 @@
+# cytoGPNet upstream clone (created by scripts/cytogpnet/run_cytogpnet.sh)
+.cytoGPNet/
+
+# cytoGPNet conversion artifacts — large pickled inputs and checkpoints, regenerable
+results/cytogpnet/*/*.obj
+results/cytogpnet/*/fold*/*.obj
+results/cytogpnet/*/ae_output/*.pth
+results/cytogpnet/*/model_output/*.pth
+
+# LaTeX build artifacts
+docs/latex/*.aux
+docs/latex/*.log
+docs/latex/*.out
+docs/latex/*.toc

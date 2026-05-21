@@ -5,6 +5,12 @@ date: "2024-06-11"
 output: html_document
 ---
 
+
+```{r config, include=FALSE}
+# External data location. Override with the DEEPLEARNING_CYTOF_ROOT environment variable.
+external_data_root <- Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
+                                 unset = "~/Documents/PhD/DeepLearning_CyTOF")
+```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -36,7 +42,7 @@ useMarkers <- c("AKT","AR","BCL2","CA9", "CD24","CD44","CD49f", "cMET","cMYC",
                 "PRB","PTEN","SMA", "Survivin", "Vimentin"
                  )           
 
-metadata <- read.csv('~/Documents/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data/breast_cancer_metadata.csv')
+metadata <- read.csv(file.path(external_data_root, 'Breast_Cancer_Wagner_2019/data/breast_cancer_metadata.csv'))
 
 metadata$dataset <- if_else(metadata$dataset == 'test', 'test', 'train')
 
@@ -44,8 +50,8 @@ metadata$dataset <- if_else(metadata$dataset == 'test', 'test', 'train')
 
 # Load normalised data
 ```{r}
-load('~/Documents/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data/breast_cancer_train_MMD_VAE_sce.RData')
-load('~/Documents/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data/breast_cancer_test_MMD_VAE_sce.RData')
+load(file.path(external_data_root, 'Breast_Cancer_Wagner_2019/data/breast_cancer_train_MMD_VAE_sce.RData'))
+load(file.path(external_data_root, 'Breast_Cancer_Wagner_2019/data/breast_cancer_test_MMD_VAE_sce.RData'))
 ```
 
 ## cluster training data
