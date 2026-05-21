@@ -69,8 +69,8 @@ res <- tibble::tibble(
   has_ci = c(TRUE, TRUE, FALSE, FALSE)
 )
 
-# We want top→bottom: dioscRi, cytoGPNet, DeepCNN, CellCNN (best first).
-# scale_y_discrete(limits = ...) is unambiguous: first listed → bottom of plot.
+# Order top-to-bottom: dioscRi, cytoGPNet, DeepCNN, CellCNN.
+# scale_y_discrete(limits = ...) places the first listed level at the bottom.
 method_order_bottom_to_top <- c("CellCNN", "DeepCNN", "cytoGPNet", "dioscRi")
 res$method <- factor(res$method, levels = method_order_bottom_to_top)
 

@@ -1,12 +1,9 @@
 # Supp Fig S7: CMV (multi-study) Frobenius distance vs study structure.
-# Faithful reproduction of rmd_data/cmv_frobenius_batch.Rmd (load -> frobenius
-# -> within/between -> per-study -> plots), with patchwork panel tags A-D added
-# so the figure matches the manuscript caption. The plotted panels are
-# deterministic; analysis-only chunks (PERMANOVA, permutation test) are omitted
-# as they do not feed the figure.
+# Same four panels as Supp Fig S6 but grouped by source study (SDY112..SDY515)
+# instead of batch. PERMANOVA / permutation tests are computed elsewhere and
+# not re-derived here.
 #
 # Output: figures/supp_fig_cmv_frobenius_batch.pdf
-#         (caller copies to dioscRi_Manuscript_latex/Plots/Supp_Figure_7.pdf)
 
 suppressPackageStartupMessages({
   library(here); library(data.table); library(dplyr); library(caret)

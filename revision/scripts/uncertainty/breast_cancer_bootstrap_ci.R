@@ -1,6 +1,6 @@
 # Breast Cancer - Bootstrap CIs on Test Set
 # Uses the pre-normalized SCEs (canonical train/test split + MMD-VAE).
-# Parallels bioheart_bootstrap_ci.R for uniform reporting across all four datasets.
+# Mirrors bioheart_bootstrap_ci.R.
 rm(list = ls())
 suppressPackageStartupMessages({
   library(dioscRi)
@@ -19,7 +19,10 @@ nclust <- 11
 bioheart_root <- Sys.getenv("BIOHEART_ROOT", unset = "~/Documents/Academic/PhD/bioheart_analysis")
 revision_root <- here::here("revision")
 base_dir <- bioheart_root  # alias: upstream inputs (raw data, sce objects, etc.)
-data_dir <- '~/Documents/Academic/PhD/DeepLearning_CyTOF/Breast_Cancer_Wagner_2019/data'
+data_dir <- file.path(
+  Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
+             unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF"),
+  "Breast_Cancer_Wagner_2019/data")
 
 useMarkers <- c("AKT","AR","BCL2","CA9","CD24","CD44","CD49f","cMET","cMYC",
                 "CyclinB1","ECadherin","EGFR","EpCAM","ERa","EZH2","H3K27me3",

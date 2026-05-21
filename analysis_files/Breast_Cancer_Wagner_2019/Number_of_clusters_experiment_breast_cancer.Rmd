@@ -9,7 +9,7 @@ output: html_document
 ```{r config, include=FALSE}
 # External data location. Override with the DEEPLEARNING_CYTOF_ROOT environment variable.
 external_data_root <- Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
-                                 unset = "~/Documents/PhD/DeepLearning_CyTOF")
+                                 unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF")
 ```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)

@@ -1,15 +1,11 @@
-# Supp Fig S8 (manuscript) / s9_s10 combined: stratified tier comparison,
-# BioHEART + CMV, MSE + AUC. Faithful reproduction of the original
-# master_supp_figures.Rmd composition, with patchwork panel tags A-D added so
-# the figure matches the manuscript caption (A=BH MSE, B=BH AUC, C=CMV MSE,
-# D=CMV AUC).
+# Supp Fig S8: stratified tier comparison, BioHEART + CMV, MSE + AUC.
+# Four panels: A=BH MSE, B=BH AUC, C=CMV MSE, D=CMV AUC.
 #
 # Inputs:  results/nref/nref_stratified_results.csv
 #          results/nref/cmv_nref_stratified_results.csv
 #          results/ablation/no_norm_comparison_results.csv
 #          results/ablation/basic_norm_comparison_results.csv
-# Outputs: figures/supp_fig_s9_s10_combined.pdf
-#          (caller copies to dioscRi_Manuscript_latex/Plots/Supp_Figure_8.pdf)
+# Output:  figures/supp_fig_s9_s10_combined.pdf
 
 suppressPackageStartupMessages({ library(here); library(ggplot2); library(patchwork) })
 

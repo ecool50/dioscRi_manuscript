@@ -1,8 +1,6 @@
-# Supplementary (response-only) N_ref sensitivity figure.
-# Two panels only: VAE reconstruction error (MSE) and pipeline runtime vs K.
-# ARI and AUC are intentionally excluded: AUC vs K is covered by manuscript
-# Supp Fig S5F, and the ARI-vs-K nuance is not used in the response.
-# No N=2 reference line.
+# N_ref sensitivity figure (response-only).
+# Two panels: VAE reconstruction error (MSE) and pipeline runtime vs K.
+# AUC vs K is in manuscript Supp Fig S5F and is not duplicated here.
 #
 # Input:  results/nref/nref_sensitivity_results.csv
 # Output: figures/supp_fig_s7_nref_sensitivity.pdf

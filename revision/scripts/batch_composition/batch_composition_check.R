@@ -16,10 +16,13 @@ useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27'
                 'CD196_CCR6', 'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7',
                 'CD19', 'CD20', 'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
 
-# Load raw CSV
+# Load raw CSV (prefer the cleaned copy if present, fall back to the raw csv)
 cat("Loading BioHEART-CT discovery cohort...\n")
-df <- fread('/tmp/bioheart_b4.csv',
-            nThread = 7) %>% as.data.frame()
+csv_path <- file.path(bioheart_root, 'data/raw_data/bioheart_b4_clean.csv')
+if (!file.exists(csv_path)) {
+  csv_path <- file.path(bioheart_root, 'data/raw_data/bioheart_ct_cytof_data_b4_mg.csv')
+}
+df <- fread(csv_path, nThread = 7) %>% as.data.frame()
 
 # Preprocess (same as pipeline: arcsinh + min-max)
 df[, useMarkers] <- cyCombine::transform_asinh(df[, useMarkers],
@@ -65,7 +68,10 @@ useMarkers_cmv <- c("TCRGD","IGD","HLADR","CD94","CD85J","CD8","CD56",
                      "CD45RA","CD4","CD38","CD33","CD3","CD28","CD27",
                      "CD25","CD24","CD20","CD19","CD161","CD16","CD14","CD127","CCR7")
 
-cmv_dir <- '~/Documents/Academic/PhD/DeepLearning_CyTOF/DeepLearningCyTOF'
+cmv_dir <- file.path(
+  Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
+             unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF"),
+  "DeepLearningCyTOF")
 
 cat("Loading CMV data...\n")
 dat_full <- fread(file.path(cmv_dir, 'DeepLearning_data.csv'), nThread = 7) %>%
@@ -106,65 +112,26 @@ cat("\nConclusion: Reference samples come from studies:",
     paste(top_cmv$study_accession, collapse = " and "), "\n")
 
 # ============================================================
-# Supplementary Table
+# Combined batch / study composition table (CSV only)
 # ============================================================
-library(gt)
-
-# BioHEART batch counts
+# BioHEART batch counts, annotated with which batches contain the K=2 refs
 batch_counts_bh <- as.data.frame(table(sample_batch$CyTOF.Batch))
 colnames(batch_counts_bh) <- c('Batch', 'Total samples')
+batch_counts_bh$`Training ref`   <- if_else(batch_counts_bh$Batch %in% top$CyTOF.Batch,    'Yes', '')
+batch_counts_bh$`Validation ref` <- if_else(batch_counts_bh$Batch %in% bottom$CyTOF.Batch, 'Yes', '')
 
-# Mark which batches contain reference samples
-batch_counts_bh$`Training ref` <- if_else(
-  batch_counts_bh$Batch %in% top$CyTOF.Batch, 'Yes', '')
-batch_counts_bh$`Validation ref` <- if_else(
-  batch_counts_bh$Batch %in% bottom$CyTOF.Batch, 'Yes', '')
-
-# CMV study counts
+# CMV study counts, annotated similarly
 study_counts_cmv <- as.data.frame(table(sample_study$study_accession))
 colnames(study_counts_cmv) <- c('Study', 'Total samples')
+study_counts_cmv$`Training ref`   <- if_else(study_counts_cmv$Study %in% top_cmv$study_accession,    'Yes', '')
+study_counts_cmv$`Validation ref` <- if_else(study_counts_cmv$Study %in% bottom_cmv$study_accession, 'Yes', '')
 
-study_counts_cmv$`Training ref` <- if_else(
-  study_counts_cmv$Study %in% top_cmv$study_accession, 'Yes', '')
-study_counts_cmv$`Validation ref` <- if_else(
-  study_counts_cmv$Study %in% bottom_cmv$study_accession, 'Yes', '')
-
-# Build gt table - BioHEART
-gt_bh <- gt(batch_counts_bh) %>%
-  tab_header(
-    title = 'BioHEART-CT Discovery Cohort',
-    subtitle = 'Batch composition of K=2 reference samples'
-  ) %>%
-  cols_label(
-    Batch = 'Batch',
-    `Total samples` = 'Samples',
-    `Training ref` = 'VAE Training',
-    `Validation ref` = 'VAE Validation'
-  )
-
-# Build gt table - CMV
-gt_cmv <- gt(study_counts_cmv) %>%
-  tab_header(
-    title = 'CMV Training Data',
-    subtitle = 'Study composition of K=2 reference samples'
-  ) %>%
-  cols_label(
-    Study = 'Study',
-    `Total samples` = 'Samples',
-    `Training ref` = 'VAE Training',
-    `Validation ref` = 'VAE Validation'
-  )
-
-# Save as PDF
-gtsave(gt_bh, file.path(revision_root, 'figures/supp_table_batch_composition_bioheart.pdf'))
-gtsave(gt_cmv, file.path(revision_root, 'figures/supp_table_batch_composition_cmv.pdf'))
-
-# Also save combined CSV
 combined <- bind_rows(
-  batch_counts_bh %>% rename(Group = Batch) %>% mutate(Dataset = 'BioHEART-CT'),
-  study_counts_cmv %>% rename(Group = Study) %>% mutate(Dataset = 'CMV')
+  batch_counts_bh   %>% rename(Group = Batch) %>% mutate(Dataset = 'BioHEART-CT'),
+  study_counts_cmv  %>% rename(Group = Study) %>% mutate(Dataset = 'CMV')
 )
-write.csv(combined, file.path(revision_root, 'results/batch_composition/reference_sample_batch_composition.csv'),
+write.csv(combined,
+          file.path(revision_root, 'results/batch_composition/reference_sample_batch_composition.csv'),
           row.names = FALSE)
 
 cat("\nTables saved to figures/ and data/\n")

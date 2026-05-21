@@ -1,12 +1,9 @@
 # Supp Fig S6: BioHEART-CT Frobenius distance vs batch structure.
-# Faithful reproduction of rmd_data/bioheart_frobenius_batch.Rmd (load ->
-# frobenius -> within/between -> per-batch -> plots), with patchwork panel
-# tags A-D added so the figure matches the manuscript caption. Computation is
-# deterministic (covariance Frobenius norms; no sampling in plotted panels),
-# so the figure is identical to the original apart from the added A-D labels.
+# Reads the raw discovery cohort CSV, computes per-sample covariance Frobenius
+# norms, and builds the four-panel figure (within/between batch, per-batch
+# distribution, distance-matrix heatmap, ranked representativeness).
 #
 # Output: figures/supp_fig_bioheart_frobenius_batch.pdf
-#         (caller copies to dioscRi_Manuscript_latex/Plots/Supp_Figure_6.pdf)
 
 suppressPackageStartupMessages({
   library(here); library(data.table); library(dplyr); library(caret)
