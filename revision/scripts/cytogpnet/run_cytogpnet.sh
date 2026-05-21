@@ -4,11 +4,11 @@
 #
 # Pipeline:
 #   1. (one-time) clone the upstream cytoGPNet repo at https://github.com/llin-lab/cytoGPNet
-#   2. (one-time) convert dioscRi data → cytoGPNet pickle format
+#   2. (one-time) convert dioscRi data to cytoGPNet pickle format
 #   3. stage fold<N>/ subdir (cytoGPNet's train_simplified.py / test.py expect it)
-#   4. pretrain the autoencoder           → ae_output/simpleAE_epoch<E>.pth
-#   5. fine-tune GP + attention + clf     → model_output/<component>_epoch<E>.pth
-#   6. test                               → model_output/test_predictions<F>.csv
+#   4. pretrain the autoencoder           -> ae_output/simpleAE_epoch<E>.pth
+#   5. fine-tune GP + attention + clf     -> model_output/<component>_epoch<E>.pth
+#   6. test                               -> model_output/test_predictions<F>.csv
 #   7. compute AUC and append to results/cytogpnet/auc_summary.csv
 #
 # Prereqs:
@@ -18,9 +18,6 @@
 #   bash run_cytogpnet.sh [bioheart]                 # dataset (default: bioheart)
 #   EPOCHS=50 bash run_cytogpnet.sh bioheart         # override epochs (default: 100)
 #   CYTOGPNET_DIR=/path/to/cytoGPNet ./run...        # use existing clone
-#
-# Note: only BioHEART has a conversion script today. To add breast/covid/cmv,
-# write analogous convert_<dataset>_for_cytogpnet.py and they'll plug in here.
 
 set -euo pipefail
 
@@ -50,15 +47,15 @@ crun() { conda run --no-capture-output -n "$CONDA_ENV" "$@"; }
 
 # ---- 1. Clone upstream cytoGPNet if absent ----
 if [ ! -d "$CYTOGPNET_DIR" ]; then
-  echo "[setup] cloning cytoGPNet → $CYTOGPNET_DIR"
+  echo "[setup] cloning cytoGPNet to $CYTOGPNET_DIR"
   git clone https://github.com/llin-lab/cytoGPNet.git "$CYTOGPNET_DIR"
 fi
 if [ ! -f "$CYTOGPNET_CODE/pretrain.py" ]; then
-  echo "ERROR: expected $CYTOGPNET_CODE/pretrain.py — is CYTOGPNET_DIR pointing at the repo root?"
+  echo "ERROR: expected $CYTOGPNET_CODE/pretrain.py -- is CYTOGPNET_DIR pointing at the repo root?"
   exit 1
 fi
 
-# ---- 2. Convert dioscRi data → cytoGPNet pickle format ----
+# ---- 2. Convert dioscRi data to cytoGPNet pickle format ----
 CONVERT_SCRIPT="$REVISION_ROOT/scripts/cytogpnet/convert_${DATASET}_for_cytogpnet.py"
 if [ ! -f "$CONVERT_SCRIPT" ]; then
   echo "ERROR: no conversion script for dataset '$DATASET' at $CONVERT_SCRIPT"
@@ -66,10 +63,10 @@ if [ ! -f "$CONVERT_SCRIPT" ]; then
   exit 1
 fi
 if [ ! -f "$DATA_ROOT/train_Data.obj" ] || [ ! -f "$DATA_ROOT/test_Data.obj" ]; then
-  echo "[1/4] converting $DATASET → cytoGPNet pickle format"
+  echo "[1/4] converting $DATASET to cytoGPNet pickle format"
   crun python "$CONVERT_SCRIPT"
 else
-  echo "[1/4] $DATASET pickles already present — skipping conversion"
+  echo "[1/4] $DATASET pickles already present, skipping conversion"
 fi
 
 # ---- 3. Stage fold<N>/ subdir (cytoGPNet expects this for train/test) ----
@@ -83,7 +80,7 @@ AE_OUT="$DATA_ROOT/ae_output"
 AE_CKPT="$AE_OUT/simpleAE_epoch${EPOCHS}.pth"
 mkdir -p "$AE_OUT"
 if [ -f "$AE_CKPT" ]; then
-  echo "[2/4] AE checkpoint already exists at $AE_CKPT — skipping pretrain (delete to force rerun)"
+  echo "[2/4] AE checkpoint already exists at $AE_CKPT, skipping pretrain (delete to force rerun)"
 else
   echo "[2/4] pretraining AE ($EPOCHS epochs)"
   (

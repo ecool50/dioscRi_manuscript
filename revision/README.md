@@ -10,7 +10,7 @@ a point in the response letter.
 revision/
 ├── docs/                       # Plan, tracker, response letter
 │   ├── reviewer_response_plan.md       Plan + reviewer-by-reviewer status
-│   ├── revision_tracker.md             Tracker mapping points → scripts/results
+│   ├── revision_tracker.md             Tracker mapping points to scripts/results
 │   ├── response_to_reviewers.md        Full response letter (markdown)
 │   ├── response_to_reviewers.docx
 │   ├── reviewer1_summary.{md,pdf}
