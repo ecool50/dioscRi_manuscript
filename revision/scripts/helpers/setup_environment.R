@@ -18,6 +18,22 @@ if (!requireNamespace("here", quietly = TRUE)) {
   install.packages("here", repos = "https://cloud.r-project.org")
 }
 
+# Bioconductor packages (treekoR, ggtree, SummarizedExperiment, SingleCellExperiment)
+# are pulled in by the dioscRi package. install.packages() alone cannot resolve them,
+# so install BiocManager up front and pre-install the Bioc dependencies.
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager", repos = "https://cloud.r-project.org")
+}
+bioc_deps <- c("SummarizedExperiment", "SingleCellExperiment",
+               "treekoR", "ggtree", "BiocStyle")
+missing_bioc <- bioc_deps[!vapply(bioc_deps, requireNamespace,
+                                   logical(1), quietly = TRUE)]
+if (length(missing_bioc)) {
+  cat("  Installing Bioconductor deps:",
+      paste(missing_bioc, collapse = ", "), "\n")
+  BiocManager::install(missing_bioc, update = FALSE, ask = FALSE)
+}
+
 # keras3 1.2.0 (must match manuscript)
 if (packageVersion("keras3") != "1.2.0") {
   cat("  Installing keras3 1.2.0...\n")
@@ -133,3 +149,7 @@ cat("\n=== Setup complete. ===\n")
 cat("To use this environment in scripts, add this at the top:\n")
 cat("  Sys.setenv(RETICULATE_PYTHON = '~/.virtualenvs/r-reticulate/bin/python')\n")
 cat("  library(reticulate)\n\n")
+
+cat("Next step: download the manuscript data (~7.2 GB) from Zenodo:\n")
+cat("  export BIOHEART_ROOT=/path/to/bioheart_analysis\n")
+cat("  Rscript revision/scripts/helpers/fetch_data.R\n\n")

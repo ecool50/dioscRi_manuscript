@@ -30,3 +30,4 @@ dioscRi_introduction*.Rmd
 *.blg
 *.synctex.gz
 __pycache__/
+.claude/
