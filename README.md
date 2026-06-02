@@ -109,42 +109,17 @@ Rscript revision/scripts/helpers/fetch_data.R
 
 downloads it into `$BIOHEART_ROOT/data/`, verifies the md5, and unzips it (resumable via `--force`). After unzipping, the layout is preserved as `dioscRi_analysis_data/` under `$BIOHEART_ROOT/data/`.
 
-### External datasets (CMV, Breast Cancer, COVID-19)
+### Baseline predictions
 
-The three non-BioHEART datasets reuse raw cytometry data and pre-computed
-CellCNN / DeepCNN baseline predictions from the DeepLearningCyTOF
-distribution (Hu et al., PNAS 2020). These inputs are **not** mirrored on
-Zenodo and must be obtained from the original sources:
-
-- **DeepLearningCyTOF code, helpers, and pre-computed model outputs:**
-  https://github.com/hzc363/DeepLearningCyTOF
-- **CMV (SDY519 held out):** ImmPort accessions SDY112, SDY113, SDY305,
-  SDY311, SDY315, SDY472, SDY478, SDY515, SDY519 (https://www.immport.org/).
-  The DeepLearningCyTOF repo includes a `deep_learning_allData.obj` pickle
-  with the pre-processed CMV data used here.
-- **Breast Cancer:** Wagner et al. 2019, *Cell* 177(5):1330. See that paper's
-  Data Availability statement for repository access.
-- **COVID-19 PBMC:** Mathew et al. 2020, *Science* 369(6508):eabc8511. See
-  that paper's Data Availability statement for repository access.
-
-Place all of these under a single parent directory and point
-`$DEEPLEARNING_CYTOF_ROOT` at it:
-
-```
-DeepLearning_CyTOF/
-├── Bioheart_combined/data/            # CellCNN / DeepCNN baseline outputs on BioHEART-CT
-├── Breast_Cancer_Wagner_2019/data/    # Wagner 2019 raw + baseline outputs
-├── COVID_19_PBMC_Mathew_2020/data/    # Mathew 2020 raw + baseline outputs
-└── DeepLearningCyTOF/                 # CMV: deep_learning_allData.obj + cmv_*_aucs.csv
-```
-
-```bash
-export DEEPLEARNING_CYTOF_ROOT=/path/to/DeepLearning_CyTOF
-```
-
-Without these inputs, the three non-BioHEART `*_prediction.Rmd` files and
-the corresponding `revision/scripts/uncertainty/{breast_cancer,covid,cmv}_bootstrap_ci.R`
-scripts will fail with a file-not-found error pointing at the missing path.
+The CellCNN / DeepCNN per-sample test predictions used to draw the
+cross-method comparison panels in Supplementary Figure 9 and Response
+Figure R1 are shipped with the repository under
+`revision/results/baselines/<dataset>/`. They are small (32 KB total) and
+let those figures reproduce from a GitHub clone alone, without re-running
+the upstream CellCNN / DeepCNN notebooks. To regenerate them from raw,
+run the `*_cnn.ipynb` notebooks under
+`$BIOHEART_ROOT/data/dioscRi_analysis_data/deep_learning_data/<dataset>/`
+(included in the Zenodo archive).
 
 ## Environment
 

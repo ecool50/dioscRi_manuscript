@@ -16,13 +16,10 @@ suppressPackageStartupMessages({
 })
 
 revision_root <- here::here("revision")
-DLC_root <- Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
-  unset = file.path(Sys.getenv("BIOHEART_ROOT",
-                               unset = "~/Documents/Academic/PhD/bioheart_analysis"),
-                    "data", "dioscRi_analysis_data"))
-# Per-sample baseline predictions (CellCNN / DeepCNN) live under
-# deep_learning_data/<dataset>/ in the Zenodo archive (v2+).
-dl_root <- file.path(DLC_root, "deep_learning_data")
+# CellCNN / DeepCNN per-sample predictions are shipped with the repo
+# under revision/results/baselines/<dataset>/ so Supp Fig 9 reproduces
+# from a GitHub clone alone (no Zenodo fetch required).
+baselines_root <- file.path(revision_root, "results", "baselines")
 
 dataset_order <- c("BioHEART-CT", "Breast Cancer", "COVID-19", "CMV SDY519")
 method_order  <- c("dioscRi", "CellCNN", "DeepCNN")
@@ -62,21 +59,21 @@ load_pred <- function(path) {
 # --- Baseline prediction files for all 4 datasets ---
 baseline_files <- list(
   list(dataset = "BioHEART-CT",   method = "CellCNN",
-       path = file.path(dl_root, "BioHEART_combined/bioheart_cell_cnn_aucs.csv")),
+       path = file.path(baselines_root, "BioHEART_combined/bioheart_cell_cnn_aucs.csv")),
   list(dataset = "BioHEART-CT",   method = "DeepCNN",
-       path = file.path(dl_root, "BioHEART_combined/bioheart_deep_cytof_aucs.csv")),
+       path = file.path(baselines_root, "BioHEART_combined/bioheart_deep_cytof_aucs.csv")),
   list(dataset = "Breast Cancer", method = "CellCNN",
-       path = file.path(dl_root, "Breast_Cancer_Wagner_2019/breast_cancer_cell_cnn_aucs.csv")),
+       path = file.path(baselines_root, "Breast_Cancer_Wagner_2019/breast_cancer_cell_cnn_aucs.csv")),
   list(dataset = "Breast Cancer", method = "DeepCNN",
-       path = file.path(dl_root, "Breast_Cancer_Wagner_2019/breast_cancer_deep_cytof_aucs.csv")),
+       path = file.path(baselines_root, "Breast_Cancer_Wagner_2019/breast_cancer_deep_cytof_aucs.csv")),
   list(dataset = "COVID-19",      method = "CellCNN",
-       path = file.path(dl_root, "COVID_19_PBMC_Mathew_2020/bcell_cell_cnn_aucs.csv")),
+       path = file.path(baselines_root, "COVID_19_PBMC_Mathew_2020/bcell_cell_cnn_aucs.csv")),
   list(dataset = "COVID-19",      method = "DeepCNN",
-       path = file.path(dl_root, "COVID_19_PBMC_Mathew_2020/bcell_deep_cytof_aucs.csv")),
+       path = file.path(baselines_root, "COVID_19_PBMC_Mathew_2020/bcell_deep_cytof_aucs.csv")),
   list(dataset = "CMV SDY519",    method = "CellCNN",
-       path = file.path(dl_root, "CMV_Study_SDY519/cmv_cell_cnn_aucs.csv")),
+       path = file.path(baselines_root, "CMV_Study_SDY519/cmv_cell_cnn_aucs.csv")),
   list(dataset = "CMV SDY519",    method = "DeepCNN",
-       path = file.path(dl_root, "CMV_Study_SDY519/cmv_deep_cytof_aucs.csv"))
+       path = file.path(baselines_root, "CMV_Study_SDY519/cmv_deep_cytof_aucs.csv"))
 )
 
 baseline_boots <- lapply(baseline_files, function(e) {

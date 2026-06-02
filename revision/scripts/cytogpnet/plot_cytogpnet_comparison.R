@@ -14,8 +14,9 @@ suppressPackageStartupMessages({
 })
 
 revision_root <- here::here("revision")
-DLC_root <- Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
-  unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF")
+# CellCNN / DeepCNN per-sample predictions on BioHEART-CT are shipped with
+# the repo under revision/results/baselines/BioHEART_combined/.
+baselines_root <- file.path(revision_root, "results", "baselines")
 
 # ---- bootstrap AUC distribution ----
 bootstrap_auc_samples <- function(labels, scores, n = 2000, seed = 1994) {
@@ -41,14 +42,14 @@ cyto <- read.csv(file.path(revision_root,
   "results/cytogpnet/bioheart/model_output/test_predictions1.csv"))
 cyto_b <- bootstrap_auc_samples(cyto$label, cyto$prediction_score)
 
-# ---- CellCNN (DeepLearningCyTOF saved per-sample test predictions) ----
-cc <- read.csv(file.path(DLC_root,
-  "Bioheart_combined/data/bioheart_cell_cnn_aucs.csv"))
+# ---- CellCNN per-sample test predictions ----
+cc <- read.csv(file.path(baselines_root,
+  "BioHEART_combined/bioheart_cell_cnn_aucs.csv"))
 cc_b <- bootstrap_auc_samples(cc$truth, cc$pred)
 
 # ---- DeepCNN (a.k.a. DL CyTOF) per-sample test predictions ----
-dc <- read.csv(file.path(DLC_root,
-  "Bioheart_combined/data/bioheart_deep_cytof_aucs.csv"))
+dc <- read.csv(file.path(baselines_root,
+  "BioHEART_combined/bioheart_deep_cytof_aucs.csv"))
 dc_b <- bootstrap_auc_samples(dc$truth, dc$pred)
 
 # ---- dioscRi: existing 2000-resample bootstrap distribution + point AUC ----
