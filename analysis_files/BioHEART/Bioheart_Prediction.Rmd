@@ -50,9 +50,10 @@ bioheart_root <- Sys.getenv(
   "BIOHEART_ROOT",
   unset = "~/Documents/Academic/PhD/bioheart_analysis"
 )
-sce_dat <- file.path(bioheart_root, "data", "sce_dat")
-load(file.path(sce_dat, "study_4_MMD_VAE_updated.RData"))
-load(file.path(sce_dat, "study_3_MMD_VAE_updated.RData"))
+sce_dir <- file.path(bioheart_root, "data", "dioscRi_analysis_data",
+                     "sce_objects", "BioHEART")
+load(file.path(sce_dir, "study_4_MMD_VAE_updated.RData"))
+load(file.path(sce_dir, "study_3_MMD_VAE_updated.RData"))
 ```
 
 ## Use FuseSOM to cluster the normalised data

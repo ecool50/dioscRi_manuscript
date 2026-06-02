@@ -21,8 +21,8 @@ revision_root <- here::here("revision")
 base_dir <- bioheart_root  # alias: upstream inputs (raw data, sce objects, etc.)
 data_dir <- file.path(
   Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
-             unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF"),
-  "Breast_Cancer_Wagner_2019/data")
+             unset = file.path(bioheart_root, "data", "dioscRi_analysis_data")),
+  "sce_objects", "Breast_Cancer_Wagner_2019")
 
 useMarkers <- c("AKT","AR","BCL2","CA9","CD24","CD44","CD49f","cMET","cMYC",
                 "CyclinB1","ECadherin","EGFR","EpCAM","ERa","EZH2","H3K27me3",

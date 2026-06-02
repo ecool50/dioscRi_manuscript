@@ -29,8 +29,9 @@ cluster_col <- "clusters_11"
 
 # --- Load normalised data ---
 cat("Loading data...\n")
-load(file.path(base_dir, 'data/sce_dat/study_4_MMD_VAE_updated.RData'))  # sce_norm (discovery)
-load(file.path(base_dir, 'data/sce_dat/study_3_MMD_VAE_updated.RData'))  # sce_3_norm (validation)
+sce_dir <- file.path(base_dir, 'data/dioscRi_analysis_data/sce_objects/BioHEART')
+load(file.path(sce_dir, 'study_4_MMD_VAE_updated.RData'))  # sce_norm (discovery)
+load(file.path(sce_dir, 'study_3_MMD_VAE_updated.RData'))  # sce_3_norm (validation)
 
 # --- Cluster discovery data ---
 cat("Clustering discovery cohort...\n")

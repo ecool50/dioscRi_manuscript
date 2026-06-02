@@ -10,6 +10,59 @@ For the **dioscRi R package itself**, see [github.com/ecool50/dioscRi](https://g
 
 ---
 
+## Quick start (headline BioHEART-CT result)
+
+Reproduces the main AUC of 0.83 on the BioHEART-CT validation cohort.
+Roughly 30 min of human time, plus ~1 hr for the data download and pipeline.
+
+```bash
+git clone https://github.com/ecool50/dioscRi.git
+git clone https://github.com/ecool50/dioscRi_manuscript.git
+
+# parent of dioscRi_manuscript (used by every script as $BIOHEART_ROOT)
+export BIOHEART_ROOT="$PWD"
+
+# R packages + Bioconductor deps + Python venv with TensorFlow 2.16.2
+Rscript dioscRi_manuscript/revision/scripts/helpers/setup_environment.R
+
+# the dioscRi package itself
+Rscript -e 'devtools::install_github("ecool50/dioscRi")'
+
+# ~7.2 GB analysis archive from Zenodo, md5-verified, unzipped under
+# $BIOHEART_ROOT/data/dioscRi_analysis_data/
+Rscript dioscRi_manuscript/revision/scripts/helpers/fetch_data.R
+
+# render the primary analysis
+Rscript -e 'rmarkdown::render("dioscRi_manuscript/analysis_files/BioHEART/Bioheart_Prediction.Rmd")'
+```
+
+The three other datasets (CMV, Breast Cancer, COVID-19) and the cytoGPNet
+baseline require additional data sources, documented under
+[External datasets](#external-datasets-cmv-breast-cancer-covid-19) and
+[cytoGPNet](#cytogpnet-baseline-optional) below.
+
+## Prerequisites
+
+The setup script assumes a working installation of:
+
+- **R 4.5.0** ([CRAN](https://cran.r-project.org/)). Older or newer 4.x
+  versions may also work, but only 4.5.0 is verified to match the pinned
+  `sessionInfo()`. On macOS, [`rig`](https://github.com/r-lib/rig) is the
+  easiest way to install a specific R version side by side with the system R.
+- **Python 3.10** (verified at 3.10.15). `setup_environment.R` creates an
+  R-controlled `r-reticulate` virtualenv on top of an existing Python
+  interpreter; it cannot install Python itself. Recommended:
+  [`pyenv`](https://github.com/pyenv/pyenv) (`pyenv install 3.10.15`).
+- **git**, a C/C++ toolchain (`xcode-select --install` on macOS,
+  `build-essential` on Debian/Ubuntu) for compiling R/Python deps.
+- **(cytoGPNet only)** `conda` / `miniconda`. The cytoGPNet baseline lives
+  in a separate PyTorch 2.0 + gpytorch 1.10 environment.
+
+If `setup_environment.R` errors out with *"Could not find Python 3"*,
+install Python 3.10 via pyenv first and re-run.
+
+---
+
 ## Repository layout
 
 This repository contains **code and data only**. The manuscript LaTeX source, response letter, and other write-up artefacts are not tracked here.
@@ -56,7 +109,42 @@ Rscript revision/scripts/helpers/fetch_data.R
 
 downloads it into `$BIOHEART_ROOT/data/`, verifies the md5, and unzips it (resumable via `--force`). After unzipping, the layout is preserved as `dioscRi_analysis_data/` under `$BIOHEART_ROOT/data/`.
 
-External cytometry inputs used by some analyses live outside the manuscript repo (e.g. CMV data from the DeepLearningCyTOF distribution); paths are documented at the top of the relevant scripts.
+### External datasets (CMV, Breast Cancer, COVID-19)
+
+The three non-BioHEART datasets reuse raw cytometry data and pre-computed
+CellCNN / DeepCNN baseline predictions from the DeepLearningCyTOF
+distribution (Hu et al., PNAS 2020). These inputs are **not** mirrored on
+Zenodo and must be obtained from the original sources:
+
+- **DeepLearningCyTOF code, helpers, and pre-computed model outputs:**
+  https://github.com/hzc363/DeepLearningCyTOF
+- **CMV (SDY519 held out):** ImmPort accessions SDY112, SDY113, SDY305,
+  SDY311, SDY315, SDY472, SDY478, SDY515, SDY519 (https://www.immport.org/).
+  The DeepLearningCyTOF repo includes a `deep_learning_allData.obj` pickle
+  with the pre-processed CMV data used here.
+- **Breast Cancer:** Wagner et al. 2019, *Cell* 177(5):1330. See that paper's
+  Data Availability statement for repository access.
+- **COVID-19 PBMC:** Mathew et al. 2020, *Science* 369(6508):eabc8511. See
+  that paper's Data Availability statement for repository access.
+
+Place all of these under a single parent directory and point
+`$DEEPLEARNING_CYTOF_ROOT` at it:
+
+```
+DeepLearning_CyTOF/
+├── Bioheart_combined/data/            # CellCNN / DeepCNN baseline outputs on BioHEART-CT
+├── Breast_Cancer_Wagner_2019/data/    # Wagner 2019 raw + baseline outputs
+├── COVID_19_PBMC_Mathew_2020/data/    # Mathew 2020 raw + baseline outputs
+└── DeepLearningCyTOF/                 # CMV: deep_learning_allData.obj + cmv_*_aucs.csv
+```
+
+```bash
+export DEEPLEARNING_CYTOF_ROOT=/path/to/DeepLearning_CyTOF
+```
+
+Without these inputs, the three non-BioHEART `*_prediction.Rmd` files and
+the corresponding `revision/scripts/uncertainty/{breast_cancer,covid,cmv}_bootstrap_ci.R`
+scripts will fail with a file-not-found error pointing at the missing path.
 
 ## Environment
 
@@ -77,7 +165,24 @@ Rscript revision/scripts/helpers/setup_environment.R
 
 A full `sessionInfo()` snapshot is at `revision/results/sessionInfo.txt`.
 
-For the cytoGPNet baseline only, a separate conda environment is needed (PyTorch 2.0 + gpytorch 1.10, named `cytoGPNet`). See `revision/scripts/cytogpnet/run_cytogpnet.sh`.
+### cytoGPNet baseline (optional)
+
+The cytoGPNet baseline is run in a separate `conda` environment
+(PyTorch 2.0 + gpytorch 1.10, named `cytoGPNet`) and requires a local
+clone of the upstream cytoGPNet repository
+(https://github.com/llin-lab/cytoGPNet):
+
+```bash
+git clone https://github.com/llin-lab/cytoGPNet
+conda env create -f cytoGPNet/environment.yml   # creates env named "cytoGPNet"
+
+export CYTOGPNET_DIR=$PWD/cytoGPNet
+bash dioscRi_manuscript/revision/scripts/cytogpnet/run_cytogpnet.sh bioheart
+Rscript dioscRi_manuscript/revision/scripts/cytogpnet/plot_cytogpnet_comparison.R
+```
+
+This is needed only to reproduce Response Figure R1; it is not part of the
+main results.
 
 ## Path convention
 

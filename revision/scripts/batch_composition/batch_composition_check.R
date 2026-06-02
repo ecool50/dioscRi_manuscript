@@ -20,6 +20,12 @@ useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27'
 cat("Loading BioHEART-CT discovery cohort...\n")
 csv_path <- file.path(bioheart_root, 'data/raw_data/bioheart_b4_clean.csv')
 if (!file.exists(csv_path)) {
+  # Zenodo archive location
+  csv_path <- file.path(bioheart_root,
+                        'data/dioscRi_analysis_data/raw_files',
+                        'bioheart_ct_cytof_data_b4_mg.csv')
+}
+if (!file.exists(csv_path)) {
   csv_path <- file.path(bioheart_root, 'data/raw_data/bioheart_ct_cytof_data_b4_mg.csv')
 }
 df <- fread(csv_path, nThread = 7) %>% as.data.frame()
@@ -68,15 +74,19 @@ useMarkers_cmv <- c("TCRGD","IGD","HLADR","CD94","CD85J","CD8","CD56",
                      "CD45RA","CD4","CD38","CD33","CD3","CD28","CD27",
                      "CD25","CD24","CD20","CD19","CD161","CD16","CD14","CD127","CCR7")
 
-cmv_dir <- file.path(
-  Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
-             unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF"),
-  "DeepLearningCyTOF")
+# CMV raw flat CSV (DeepLearning_data.csv, ~2.6 GB) is NOT in the Zenodo
+# archive. Obtain separately from https://github.com/hzc363/DeepLearningCyTOF.
+# Metadata (cmv_metadata.csv) is in Zenodo at sce_objects/CMV_Study_SDY519/.
+cmv_dir <- Sys.getenv("CMV_DIR",
+  unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF/DeepLearningCyTOF")
+cmv_metadata_path <- file.path(bioheart_root,
+                               'data/dioscRi_analysis_data/sce_objects',
+                               'CMV_Study_SDY519', 'cmv_metadata.csv')
 
 cat("Loading CMV data...\n")
 dat_full <- fread(file.path(cmv_dir, 'DeepLearning_data.csv'), nThread = 7) %>%
   as.data.frame()
-metaData_cmv <- read.csv(file.path(cmv_dir, 'cmv_metadata.csv'))
+metaData_cmv <- read.csv(cmv_metadata_path)
 metaData_cmv <- metaData_cmv[, -1]
 metaData_cmv$sample_id <- sapply(metaData_cmv$name, split_and_extract)
 

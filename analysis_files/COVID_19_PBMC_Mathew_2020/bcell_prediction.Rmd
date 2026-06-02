@@ -7,9 +7,14 @@ output: html_document
 
 
 ```{r config, include=FALSE}
-# External data location. Override with the DEEPLEARNING_CYTOF_ROOT environment variable.
+# Default points at the unzipped Zenodo archive under $BIOHEART_ROOT/data/.
+# Override DEEPLEARNING_CYTOF_ROOT to use a custom location.
 external_data_root <- Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
-                                 unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF")
+                                 unset = file.path(
+                                   Sys.getenv("BIOHEART_ROOT",
+                                              unset = "~/Documents/Academic/PhD/bioheart_analysis"),
+                                   "data", "dioscRi_analysis_data"))
+sce_subdir <- file.path(external_data_root, "sce_objects", "COVID_19_PBMC_Mathew_2020")
 ```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -29,7 +34,7 @@ suppressPackageStartupMessages({
 
 # Load in data and compute the reference sample
 ```{r}
-metadata <- read.csv(file.path(external_data_root, 'COVID_19_PBMC_Mathew_2020/data/Covid_Bcell_metadata.csv'))
+metadata <- read.csv(file.path(sce_subdir, 'Covid_Bcell_metadata.csv'))
 metadata$time_days <- factor(metadata$time_days)
 
 useMarkers <- c("CD45RA.BUV395","PD.1.BV421","CXCR5.BB515","TCF.1.AF647", 
@@ -41,8 +46,8 @@ useMarkers <- c("CD45RA.BUV395","PD.1.BV421","CXCR5.BB515","TCF.1.AF647",
 
 # Load normalised data
 ```{r}
-load(file.path(external_data_root, 'COVID_19_PBMC_Mathew_2020//data/bcell_down_sampled_train_MMD_VAE_sce.RData'))
-load(file.path(external_data_root, 'COVID_19_PBMC_Mathew_2020//data/bcell_down_sampled_test_MMD_VAE_sce.RData'))
+load(file.path(sce_subdir, 'bcell_down_sampled_train_MMD_VAE_sce.RData'))
+load(file.path(sce_subdir, 'bcell_down_sampled_test_MMD_VAE_sce.RData'))
 ```
 
 ## cluster training data

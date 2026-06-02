@@ -36,8 +36,9 @@ cluster_col <- "clusters_11"
 
 # --- Load data ---
 cat("Loading data...\n")
-load(file.path(base_dir, 'data/sce_dat/study_4_MMD_VAE_updated.RData'))  # sce_norm
-load(file.path(base_dir, 'data/sce_dat/study_3_MMD_VAE_updated.RData'))  # sce_3_norm
+sce_dir <- file.path(base_dir, 'data/dioscRi_analysis_data/sce_objects/BioHEART')
+load(file.path(sce_dir, 'study_4_MMD_VAE_updated.RData'))  # sce_norm
+load(file.path(sce_dir, 'study_3_MMD_VAE_updated.RData'))  # sce_3_norm
 
 # --- Clinical data ---
 clinicaldata <- colData(sce_norm) %>%

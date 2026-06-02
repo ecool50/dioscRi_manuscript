@@ -7,9 +7,14 @@ output: html_document
 
 
 ```{r config, include=FALSE}
-# External data location. Override with the DEEPLEARNING_CYTOF_ROOT environment variable.
+# Default points at the unzipped Zenodo archive under $BIOHEART_ROOT/data/.
+# Override DEEPLEARNING_CYTOF_ROOT to use a custom location.
 external_data_root <- Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
-                                 unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF")
+                                 unset = file.path(
+                                   Sys.getenv("BIOHEART_ROOT",
+                                              unset = "~/Documents/Academic/PhD/bioheart_analysis"),
+                                   "data", "dioscRi_analysis_data"))
+sce_subdir <- file.path(external_data_root, "sce_objects", "CMV_Study_SDY519")
 ```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -37,7 +42,7 @@ split_and_extract <- function(string, n) {
 
 
 ```{r}
-metaData <- read.csv(file.path(external_data_root, 'DeepLearningCyTOF/cmv_metadata.csv'))
+metaData <- read.csv(file.path(sce_subdir, 'cmv_metadata.csv'))
 metaData <- metaData[, -1]
 
 metaData$sample_id <- lapply(metaData$name, split_and_extract)
@@ -49,8 +54,8 @@ useMarkers <- c("TCRGD", "IGD","HLADR", "CD94","CD85J","CD8","CD56",
 ```
 
 ```{r}
-load(file.path(external_data_root, "DeepLearningCyTOF/Data/cmv_train_MMD_VAE_sce.RData"))
-load(file.path(external_data_root, "DeepLearningCyTOF/Data/cmv_test_MMD_VAE_sce.RData"))
+load(file.path(sce_subdir, "cmv_train_MMD_VAE_sce.RData"))
+load(file.path(sce_subdir, "cmv_test_MMD_VAE_sce.RData"))
 ```
 
 

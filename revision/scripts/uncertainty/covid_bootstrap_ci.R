@@ -21,8 +21,8 @@ revision_root <- here::here("revision")
 base_dir <- bioheart_root  # alias: upstream inputs (raw data, sce objects, etc.)
 data_dir <- file.path(
   Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
-             unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF"),
-  "COVID_19_PBMC_Mathew_2020/data")
+             unset = file.path(bioheart_root, "data", "dioscRi_analysis_data")),
+  "sce_objects", "COVID_19_PBMC_Mathew_2020")
 
 useMarkers <- c("CD45RA.BUV395","PD.1.BV421","CXCR5.BB515","TCF.1.AF647",
                 "CD38.BUV661","CD39.APCFire750","CD95.BV650","Eomes.PEef610",
