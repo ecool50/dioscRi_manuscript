@@ -6,7 +6,7 @@ Code and reproduction materials for the manuscript
 
 This repository contains everything needed to reproduce the analyses, figures, and supplementary materials, including the experiments added for the revision (uncertainty quantification, ablation, downsampling sensitivity, batch composition, reference-sample selection, and the cytoGPNet baseline).
 
-For the **dioscRi R package itself**, see [github.com/ecool50/dioscRi](https://github.com/ecool50/dioscRi). The package and this repository are versioned together; the release tag `v1.0.0` (created at acceptance) is the immutable reference for this manuscript.
+For the **dioscRi R package itself**, see [github.com/ecool50/dioscRi](https://github.com/ecool50/dioscRi) (source) or [ecool50.github.io/dioscRi](https://ecool50.github.io/dioscRi/) (function reference + vignettes). The package and this repository are versioned together; the release tag `v1.0.0` (created at acceptance) is the immutable reference for this manuscript.
 
 ---
 
