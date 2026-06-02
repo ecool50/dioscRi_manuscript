@@ -26,6 +26,16 @@ out_dir = os.path.join(revision_root, 'results/cytogpnet/bioheart')
 os.makedirs(out_dir, exist_ok=True)
 base_dir = bioheart_root  # alias: upstream inputs (raw_data, misc/Study_3_2019)
 
+
+def _first_existing(*candidates):
+    """Return the first candidate path that exists; raise if none do."""
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    raise FileNotFoundError(
+        "None of these paths exist:\n  " + "\n  ".join(candidates)
+    )
+
 # Markers (underscore format matching CSV)
 markers = [
     'HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
@@ -37,20 +47,22 @@ num_markers = len(markers)
 
 # --- Load discovery cohort (training) ---
 print("Loading discovery cohort...")
-# Try the clean copy first, fall back to /tmp
-csv_path = os.path.join(base_dir, 'data/raw_data/bioheart_b4_clean.csv')
-if not os.path.exists(csv_path):
-    csv_path = '/tmp/bioheart_b4.csv'
-if not os.path.exists(csv_path):
-    # Try original
-    csv_path = os.path.join(base_dir, 'data/raw_data/bioheart_ct_cytof_data_b4_mg.csv')
-
+csv_path = _first_existing(
+    # Zenodo archive (unzipped under $BIOHEART_ROOT/data/)
+    os.path.join(base_dir, 'data/dioscRi_analysis_data/raw_files/bioheart_ct_cytof_data_b4_mg.csv'),
+    # Local working layout: prefer the cleaned copy, then the raw export
+    os.path.join(base_dir, 'data/raw_data/bioheart_b4_clean.csv'),
+    os.path.join(base_dir, 'data/raw_data/bioheart_ct_cytof_data_b4_mg.csv'),
+)
 df_disc = pd.read_csv(csv_path)
 print(f"  Discovery: {len(df_disc)} cells, {df_disc['sample_id'].nunique()} samples")
 
 # --- Load validation cohort ---
 print("Loading validation cohort...")
-val_csv = os.path.join(base_dir, 'misc/Study_3_2019/all_batches_processed_mg_10K.csv')
+val_csv = _first_existing(
+    os.path.join(base_dir, 'data/dioscRi_analysis_data/raw_files/all_batches_processed_mg_10K.csv'),
+    os.path.join(base_dir, 'misc/Study_3_2019/all_batches_processed_mg_10K.csv'),
+)
 df_val = pd.read_csv(val_csv)
 print(f"  Validation: {len(df_val)} cells, {df_val['sample_id'].nunique()} samples")
 
