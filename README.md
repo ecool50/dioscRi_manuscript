@@ -90,8 +90,7 @@ dioscRi_manuscript/
     │   │                          for the per-tier AUC distribution)
     │   ├── cytogpnet/             cytoGPNet baseline runner + plot_cytogpnet_comparison.R
     │   │                          (Response Fig R1, not in the manuscript itself)
-    │   └── helpers/               setup_environment.R, fetch_data.R,
-    │                              extract_discovery_from_full_sce.R (one-off data prep)
+    │   └── helpers/               setup_environment.R, fetch_data.R
     └── results/                 Output CSVs/RDS, supplementary numerical results
         └── sessionInfo.txt        Dependency snapshot (R 4.5.0)
 ```

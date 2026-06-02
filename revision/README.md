@@ -26,7 +26,7 @@ revision/
 │   ├── batch_composition/  R1 Major 1 / R2 Major 2 — reference sample batches
 │   ├── nref/           R2 Major 3   — K=2 vs K=6–7 sensitivity
 │   ├── cytogpnet/      R2 Major 6   — cytoGPNet baseline comparison
-│   └── helpers/        setup_environment.R, extract_discovery_from_full_sce.R
+│   └── helpers/        setup_environment.R, fetch_data.R
 ├── results/                    # Output CSVs / pickled objects
 │   ├── uncertainty/    bootstrap_ci.csv + bootstrap_distribution.csv per dataset
 │   ├── ablation/       bioheart_ablation_results.csv + no_norm / basic_norm
