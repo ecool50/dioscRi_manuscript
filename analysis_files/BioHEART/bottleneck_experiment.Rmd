@@ -48,8 +48,16 @@ useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27'
 ```{r}
 # study 4
 set.seed(1994)
-df <- fread('../../../raw_data/bioheart_ct_cytof_data_b4_mg.csv',
-              nThread = 7) %>%
+bioheart_root <- Sys.getenv("BIOHEART_ROOT",
+                            unset = "~/Documents/Academic/PhD/bioheart_analysis")
+disc_csv <- {
+  cands <- c(
+    file.path(bioheart_root, "data/dioscRi_analysis_data/raw_files",
+              "bioheart_ct_cytof_data_b4_mg.csv"),
+    file.path(bioheart_root, "data/raw_data/bioheart_ct_cytof_data_b4_mg.csv"))
+  cands[file.exists(cands)][1]
+}
+df <- fread(disc_csv, nThread = 7) %>%
   as.data.frame()
 ```
 
@@ -68,8 +76,15 @@ colnames(df)[colnames(df) %in% useMarkers] <-
 ## Study 3
 ```{r}
 set.seed(1994)
-df_3 <- fread('../../../Study_3_2019/all_batches_processed_mg_10K.csv',
-              nThread = 7) %>% 
+val_csv <- {
+  cands <- c(
+    file.path(bioheart_root, "data/dioscRi_analysis_data/raw_files",
+              "all_batches_processed_mg_10K.csv"),
+    file.path(bioheart_root, "misc/Study_3_2019/all_batches_processed_mg_10K.csv"),
+    file.path(bioheart_root, "Study_3_2019/all_batches_processed_mg_10K.csv"))
+  cands[file.exists(cands)][1]
+}
+df_3 <- fread(val_csv, nThread = 7) %>%
   as.data.frame()
 
 df_3[, useMarkers]  <- cyCombine::transform_asinh(df_3[, useMarkers], 

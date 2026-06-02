@@ -59,8 +59,16 @@ final_celltypes <- c(
 # Read in the datasets
 ```{r}
 set.seed(1994)
-df_4 <- fread('../../../raw_data/bioheart_ct_cytof_data_b4_mg.csv',
-              nThread = 7) %>%
+bioheart_root <- Sys.getenv("BIOHEART_ROOT",
+                            unset = "~/Documents/Academic/PhD/bioheart_analysis")
+disc_csv <- {
+  cands <- c(
+    file.path(bioheart_root, "data/dioscRi_analysis_data/raw_files",
+              "bioheart_ct_cytof_data_b4_mg.csv"),
+    file.path(bioheart_root, "data/raw_data/bioheart_ct_cytof_data_b4_mg.csv"))
+  cands[file.exists(cands)][1]
+}
+df_4 <- fread(disc_csv, nThread = 7) %>%
   as.data.frame() %>%
     dplyr::select(c(useMarkers, "sample_id", "CyTOF.Batch", "gensini_bin",
                   "mg_cell_type_distinct", "Age", "Statin", "Gender", "file_name"))
@@ -73,8 +81,15 @@ colnames(df_4)[colnames(df_4) == "gensini_bin"] = "Gensini_bin"
 
 ```{r}
 set.seed(1994)
-df_3 <- fread('../../../Study_3_2019/all_batches_processed_mg_10K.csv',
-              nThread = 7) %>%
+val_csv <- {
+  cands <- c(
+    file.path(bioheart_root, "data/dioscRi_analysis_data/raw_files",
+              "all_batches_processed_mg_10K.csv"),
+    file.path(bioheart_root, "misc/Study_3_2019/all_batches_processed_mg_10K.csv"),
+    file.path(bioheart_root, "Study_3_2019/all_batches_processed_mg_10K.csv"))
+  cands[file.exists(cands)][1]
+}
+df_3 <- fread(val_csv, nThread = 7) %>%
   as.data.frame() %>%
   dplyr::select(c(useMarkers,  "sample_id", "CellTypes", "Batch",
                   "Age", "Statin", "Gender", "Gensini_bin", "file_name"))
@@ -122,5 +137,9 @@ sce_imubac <- iMUBAC::batchCorrection(
 
 # Save sce_imubac object
 ```{r, eval=T}
-save(sce_imubac, file = "../sce_dat/bioheart_iMUBAC_batch_corrected.RData")
+out_dir <- file.path(bioheart_root, "data", "dioscRi_analysis_data",
+                     "sce_objects", "BioHEART")
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+save(sce_imubac,
+     file = file.path(out_dir, "bioheart_iMUBAC_batch_corrected.RData"))
 ```
