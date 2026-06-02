@@ -85,7 +85,8 @@ dioscRi_manuscript/
     │   ├── ablation/              24-variant ablation (Supp Fig 11)
     │   ├── downsampling/          Cells-per-sample sensitivity (Supp Fig 10)
     │   ├── batch_composition/     Frobenius / batch-structure analyses (Supp Figs 6, 7;
-    │   │                          batch_composition_check.R is a precursor diagnostic)
+    │   │                          precompute_cmv_frobenius.R regenerates the Supp Fig 7
+    │   │                          distance CSVs from the 2.6 GB raw CMV CSV if needed)
     │   ├── nref/                  Reference-sample sensitivity (Supp Fig 8 + plot_nref_sensitivity.R
     │   │                          for the per-tier AUC distribution)
     │   ├── cytogpnet/             cytoGPNet baseline runner + plot_cytogpnet_comparison.R

@@ -31,7 +31,7 @@ revision/
 │   ├── uncertainty/    bootstrap_ci.csv + bootstrap_distribution.csv per dataset
 │   ├── ablation/       bioheart_ablation_results.csv + no_norm / basic_norm
 │   ├── downsampling/   per-cell-count results + per-sample ARI + F1
-│   ├── batch_composition/  reference_sample_batch_composition.csv
+│   ├── batch_composition/  cmv_frobenius_{distances,avgnorms}.csv (Supp Fig 7 inputs)
 │   ├── nref/           K-sensitivity sweeps across datasets
     └── cytogpnet/bioheart/  Pickled inputs + .pth checkpoints + predictions
 ```
@@ -72,7 +72,6 @@ Rscript scripts/uncertainty/plot_uncertainty_supp_figure.R   # combined fig
 
 Rscript scripts/ablation/bioheart_ablation.R
 Rscript scripts/downsampling/bioheart_downsampling_sensitivity.R
-Rscript scripts/batch_composition/batch_composition_check.R
 
 # cytoGPNet — end-to-end (clone, convert, pretrain, train, test, AUC)
 #   One-time: conda env create -f .cytoGPNet/environment.yml
