@@ -43,8 +43,14 @@ useMarkers <- c('HLA-DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27'
 
 # Load normalised data
 ```{r}
-load('../../../sce_dat/study_4_MMD_VAE_updated.RData')
-load('../../../sce_dat/study_3_MMD_VAE_updated.RData')
+bioheart_root <- Sys.getenv(
+  "BIOHEART_ROOT",
+  unset = "~/Documents/Academic/PhD/bioheart_analysis"
+)
+sce_dir <- file.path(bioheart_root, "data", "dioscRi_analysis_data",
+                     "sce_objects", "BioHEART")
+load(file.path(sce_dir, "study_4_MMD_VAE_updated.RData"))
+load(file.path(sce_dir, "study_3_MMD_VAE_updated.RData"))
 ```
 
 ```{r}

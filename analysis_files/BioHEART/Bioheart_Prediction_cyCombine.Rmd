@@ -45,7 +45,13 @@ useMarkers <- gsub("_", "-", useMarkers)
 
 # Load the cyCombine normalised data
 ```{r}
-load('../../../sce_dat/bioheart_cyCombine_batch_corrected.RData')
+bioheart_root <- Sys.getenv(
+  "BIOHEART_ROOT",
+  unset = "~/Documents/Academic/PhD/bioheart_analysis"
+)
+sce_dir <- file.path(bioheart_root, "data", "dioscRi_analysis_data",
+                     "sce_objects", "BioHEART")
+load(file.path(sce_dir, "bioheart_cyCombine_batch_corrected.RData"))
 ```
 
 ## Subset the data
