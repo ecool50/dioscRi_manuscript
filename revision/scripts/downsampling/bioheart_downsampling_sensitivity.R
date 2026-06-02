@@ -39,15 +39,34 @@ useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27'
                 'CD196_CCR6', 'CD39', 'CD38', 'Ki67', 'CD183_CXCR3', 'CCR7',
                 'CD19', 'CD20', 'IgD', 'CD14', 'CD304', 'CD141', 'CD1c_PE')
 
-# --- Load 20K data (superset of 10K) ---
-cat("Loading BioHEART-CT 20K data...\n")
-df_full <- fread(file.path(base_dir, 'data/raw_data/bioheart_ct_cytof_data_b4_mg_20K.csv'),
-                 nThread = 7) %>% as.data.frame()
+# --- Load discovery cohort (20K cells/sample superset; downsample from this) ---
+# NOTE: the 20K CSV is NOT in the Zenodo archive (only the 10K version is).
+# Without the 20K file, the 20000-cell level cannot be evaluated.
+disc_candidates <- c(
+  file.path(base_dir, 'data/raw_data/bioheart_ct_cytof_data_b4_mg_20K.csv'),  # local 20K (full Supp Fig 10)
+  file.path(base_dir, 'data/dioscRi_analysis_data/raw_files',
+            'bioheart_ct_cytof_data_b4_mg.csv'),                              # Zenodo 10K (1K-10K levels only)
+  file.path(base_dir, 'data/raw_data/bioheart_ct_cytof_data_b4_mg.csv'))
+disc_csv <- disc_candidates[file.exists(disc_candidates)][1]
+if (is.na(disc_csv)) stop("Discovery CSV not found in any of:\n  ",
+                          paste(disc_candidates, collapse = "\n  "))
+if (!grepl("20K", disc_csv)) {
+  cat("WARNING: 20K discovery CSV not available; capping cell_levels at 10000.\n")
+  cell_levels <- cell_levels[cell_levels <= 10000]
+}
+cat("Loading discovery cohort from", disc_csv, "...\n")
+df_full <- fread(disc_csv, nThread = 7) %>% as.data.frame()
 
-# Also load validation cohort (study 3) from raw CSV - fixed, not downsampled
-cat("Loading validation cohort...\n")
-df_val_full <- fread(file.path(base_dir, 'misc/Study_3_2019/all_batches_processed_mg_10K.csv'),
-                     nThread = 7) %>% as.data.frame()
+# --- Load validation cohort (fixed, not downsampled) ---
+val_candidates <- c(
+  file.path(base_dir, 'data/dioscRi_analysis_data/raw_files',
+            'all_batches_processed_mg_10K.csv'),                # Zenodo
+  file.path(base_dir, 'misc/Study_3_2019/all_batches_processed_mg_10K.csv'))  # local
+val_csv <- val_candidates[file.exists(val_candidates)][1]
+if (is.na(val_csv)) stop("Validation CSV not found in any of:\n  ",
+                         paste(val_candidates, collapse = "\n  "))
+cat("Loading validation cohort from", val_csv, "...\n")
+df_val_full <- fread(val_csv, nThread = 7) %>% as.data.frame()
 
 # Validation clinical data
 clinicaldata_3 <- df_val_full %>%

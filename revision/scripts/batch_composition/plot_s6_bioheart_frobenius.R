@@ -13,7 +13,14 @@ suppressPackageStartupMessages({
 revision_root <- here::here("revision")
 bioheart_root <- Sys.getenv("BIOHEART_ROOT",
                             unset = "~/Documents/Academic/PhD/bioheart_analysis")
-raw_csv <- file.path(bioheart_root, "data/raw_data/bioheart_ct_cytof_data_b4_mg.csv")
+raw_csv_candidates <- c(
+  file.path(bioheart_root, "data/dioscRi_analysis_data/raw_files",
+            "bioheart_ct_cytof_data_b4_mg.csv"),                 # Zenodo
+  file.path(bioheart_root, "data/raw_data/bioheart_b4_clean.csv"),  # local cleaned
+  file.path(bioheart_root, "data/raw_data/bioheart_ct_cytof_data_b4_mg.csv"))
+raw_csv <- raw_csv_candidates[file.exists(raw_csv_candidates)][1]
+if (is.na(raw_csv)) stop("Raw BioHEART CSV not found in any of:\n  ",
+                         paste(raw_csv_candidates, collapse = "\n  "))
 
 useMarkers <- c('HLA_DR', 'CD3', 'CD4', 'CD8a', 'CD25', 'CD127', 'FoxP3', 'CD27',
                 'KLRG1', 'CD56', 'CD45RO', 'CD45RA', 'CD192_CCR2', 'CD194_CCR4',

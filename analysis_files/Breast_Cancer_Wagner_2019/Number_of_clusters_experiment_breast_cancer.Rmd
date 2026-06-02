@@ -7,9 +7,14 @@ output: html_document
 
 
 ```{r config, include=FALSE}
-# External data location. Override with the DEEPLEARNING_CYTOF_ROOT environment variable.
+# Default points at the unzipped Zenodo archive under $BIOHEART_ROOT/data/.
+# Override DEEPLEARNING_CYTOF_ROOT to use a custom location.
 external_data_root <- Sys.getenv("DEEPLEARNING_CYTOF_ROOT",
-                                 unset = "~/Documents/Academic/PhD/DeepLearning_CyTOF")
+                                 unset = file.path(
+                                   Sys.getenv("BIOHEART_ROOT",
+                                              unset = "~/Documents/Academic/PhD/bioheart_analysis"),
+                                   "data", "dioscRi_analysis_data"))
+sce_subdir <- file.path(external_data_root, "sce_objects", "Breast_Cancer_Wagner_2019")
 ```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -42,7 +47,7 @@ useMarkers <- c("AKT","AR","BCL2","CA9", "CD24","CD44","CD49f", "cMET","cMYC",
                 "PRB","PTEN","SMA", "Survivin", "Vimentin"
                  )           
 
-metadata <- read.csv(file.path(external_data_root, 'Breast_Cancer_Wagner_2019/data/breast_cancer_metadata.csv'))
+metadata <- read.csv(file.path(sce_subdir, 'breast_cancer_metadata.csv'))
 
 metadata$dataset <- if_else(metadata$dataset == 'test', 'test', 'train')
 
@@ -50,8 +55,8 @@ metadata$dataset <- if_else(metadata$dataset == 'test', 'test', 'train')
 
 # Load normalised data
 ```{r}
-load(file.path(external_data_root, 'Breast_Cancer_Wagner_2019/data/breast_cancer_train_MMD_VAE_sce.RData'))
-load(file.path(external_data_root, 'Breast_Cancer_Wagner_2019/data/breast_cancer_test_MMD_VAE_sce.RData'))
+load(file.path(sce_subdir, 'breast_cancer_train_MMD_VAE_sce.RData'))
+load(file.path(sce_subdir, 'breast_cancer_test_MMD_VAE_sce.RData'))
 ```
 
 # Set up clinical data
